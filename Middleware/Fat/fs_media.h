@@ -19,10 +19,10 @@
  */
 typedef struct _fs_media_t
 {
-    int (*read)(struct _fs_media_t*, void*, size_t*, uint32_t);  //!< @en Device read function.
-    int (*write)(struct _fs_media_t*, void*, size_t*, uint32_t); //!< @en Device write function.
-    int (*sector_erase)(struct _fs_media_t*, uint32_t);          //!< @en Device erase sectors function.
-    //int sec_size;                                                //!< @en Device sectors count.
+    int (*read)(struct _fs_media_t*, void*, uint32_t*, uint32_t);         //!< @en Device read function.
+    int (*write)(struct _fs_media_t*, void*, uint32_t*, uint32_t);        //!< @en Device write function.
+    int (*sector_erase)(struct _fs_media_t*, void*, uint32_t*, uint32_t); //!< @en Device erase sectors function.
+    //int sec_size;                                                       //!< @en Device sectors count.
 }
 fs_media_t;
 

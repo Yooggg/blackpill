@@ -40,14 +40,14 @@
 #endif
 #define ASSERT(e)
 
-#define SEC_SIZE    4096           /* sector size */
+#define SEC_SIZE    512           /* sector size */
 #define SEC_INVAL   0xffffffff  /* invalid sector */
-#define EMPTY_BYTE_VAL 0x0
+#define EMPTY_BYTE_VAL 0xff
 /*
  * Pre-defined cluster number
  */
 #define CL_ROOT     0       /* cluster 0 means the root directory */
-#define CL_FREE     0       /* cluster 0 also means the free cluster */
+#define CL_FREE     0xfff       /* cluster 0 also means the free cluster */
 #define CL_FIRST    2       /* first legal cluster */
 #define CL_LAST     0xfffffff5  /* last legal cluster */
 #define CL_EOF      0xffffffff  /* EOF cluster */

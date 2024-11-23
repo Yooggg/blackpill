@@ -28,6 +28,8 @@ fs_volume_open(fs_media_t* media, fs_vol_t* volume, uintptr_t part, void* (*mem_
     if(!media || !volume) return EINVAL;
 
     fs_media_lock(media);
+    
+    if (!media->sector_erase) media->sector_erase = media->write;
 
     do {
         /* Read Master Boot Record. */

@@ -4,20 +4,7 @@
 void fs_media_lock(fs_media_t* media){}
 void fs_media_unlock(fs_media_t* media){}
 
-void* fs_mem_alloc(size_t size)
-{
-    static char fsbuf[20000];
-    static unsigned int position = 0;
-    void* ptr = NULL;
 
-    if (position + size <= sizeof(fsbuf))
-    {
-        ptr = fsbuf + position;
-        position += size;
-    }
-
-    return ptr;
-}
 
 // int read(_fs_media_t* dev, void* buf, size_t* len, uint32_t sector){
 //     // Проверка, что длина буфера соответствует размеру сектора

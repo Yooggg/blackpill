@@ -68,6 +68,13 @@ static void MX_USART1_UART_Init(void);
   * @brief  The application entry point.
   * @retval int
   */
+//fx_mem_pool_t fat_init_mem_pool;
+//void* fs_mem_alloc(size_t size)
+//{
+//	void *ptr = NULL;
+//	fx_mem_pool_alloc(&fat_init_mem_pool, size, &ptr);
+//	return ptr;
+//}
 int main(void)
 {
 

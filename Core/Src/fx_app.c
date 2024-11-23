@@ -3,7 +3,7 @@
 #include "task_main.h"
 
 extern void FX_Init();
-
+extern void Task_Flash_Func();
 void fx_app_init(void)
 {
 	FX_Init();	// Функция инициализации периферийных устройств
@@ -14,8 +14,13 @@ void fx_app_init(void)
 
 	//Task_Web_Init();
 
-	Task_Flash_Init();
+	//Task_Flash_Init();
+	static fx_thread_t task_flash;
+	static int stack_flash[8192*4 / sizeof(int)];
 
+	//fx_mutex_init(&mutex1, FX_MUTEX_CEILING_DISABLED, FX_SYNC_POLICY_DEFAULT);
+
+	fx_thread_init(&task_flash, Task_Flash_Func, NULL, 11, (void*)stack_flash, sizeof(stack_flash), false);
 //    static fx_thread_t t0;
 //    static uint32_t stk0[512 / sizeof(uint32_t)];
 //    fx_thread_init(&t0, blink_fn, NULL, 11, (void*)stk0, sizeof(stk0), false);

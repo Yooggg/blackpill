@@ -104,11 +104,11 @@ erase_sectors(fs_media_t* dev, uint32_t base_sec, uint32_t count, void* buf)
     uint32_t i;
     uint32_t len = SEC_SIZE;
 
-    memset(buf, 0, SEC_SIZE);
+    memset(buf, 0x00, SEC_SIZE);
 
     for (i = 0; i < count; ++i)
     {
-        if (dev->write(dev, buf, &len, base_sec + i))
+        if (dev->sector_erase(dev, buf, &len, base_sec + i))
         {
             return EIO;
         }
@@ -310,7 +310,7 @@ init_fat12(fs_media_t* dev, const fatfs_layout_t* layout, void* sec_buf)
             }
         }
 
-        error = dev->sector_erase(dev,i + 1);
+        error = dev->write(dev, buf, &len, i + 1);
 
         if (error)
         {
