@@ -1,7 +1,8 @@
 #include "spi_flash.h"
 
-spi_flash_rw_t rw_funcs;
-spi_flash_cs_t cs;
+static spi_flash_rw_t rw_funcs;
+static spi_flash_cs_t cs;
+//unsigned char zero_arr[256];
 
 void fx_init_spi_flash(int (*r)(uint8_t*, uint16_t), 
 					int (*w)(uint8_t*, uint16_t), 
@@ -97,7 +98,7 @@ void fx_spi_write_disable()
 
 void fx_spi_Set_Block_Protect(uint8_t blkno)
 {
-    uint8_t cmd = 0x50;
+    uint8_t cmd = SPI_FLASH_VOLITILE_STATUS;
     cs.enable();
     rw_funcs.write(&cmd, 1);
     cs.disable();
@@ -114,31 +115,30 @@ void fx_spi_Wait_Write_End(void)
   uint8_t buf[1] = {SPI_FLASH_READ_STATUS_1};
   uint8_t status;
 
-  cs.enable();
-  rw_funcs.write(buf, 1);
   do{
-	  rw_funcs.read(buf,1);
-	  status = buf[0];
+	  cs.enable();
+	  rw_funcs.write(buf, 1);
+	  rw_funcs.read(&status,1);
 	  fx_thread_sleep(10);
+	  cs.disable();
   }
   while((status & 0x01) == 0x01);
-  cs.disable();
 }
 
 void fx_spi_Erase_Sector(uint32_t blkno)
 {
   fx_spi_Wait_Write_End();
   
-  uint8_t offset = blkno * 512;
-  uint8_t buf[4] = {SPI_FLASH_SECTOR_ERASE, (offset >> 16) & 0xFF, (offset >> 8) & 0xFF, offset & 0xFF};
+  uint32_t offset = SPI_FLASH_SEC_SIZE * blkno;
+  uint8_t buf[4] = {SPI_FLASH_SECTOR_ERASE, (offset >> 16) & 0xff, (offset >> 8) & 0xff, offset & 0xff};
   
   fx_spi_Set_Block_Protect(0x00);
   fx_spi_write_enable();
   cs.enable();
   rw_funcs.write(buf, 4);
   cs.disable();
-  fx_spi_Wait_Write_End();
   fx_spi_write_disable();
+  fx_spi_Wait_Write_End();
   fx_spi_Set_Block_Protect(0x0F);
 }
 
@@ -173,16 +173,40 @@ int fx_flash_read(void* buf, uint32_t* nbyte, uint32_t blkno)
 	return 0;
 }
 
+int fx_flash_write_page(void* buf, uint32_t* nbyte, uint32_t blkno)
+{
+	uint32_t offset = SPI_FLASH_SEC_SIZE * blkno;
+	uint8_t data[4] = {SPI_FLASH_CMD_Write, (offset >> 16) & 0xff, (offset >> 8) & 0xff, offset & 0xff};
+	fx_spi_Wait_Write_End();
+
+	fx_spi_write_enable();
+
+	cs.enable();
+	rw_funcs.write(data, 4);
+	rw_funcs.write(buf, *nbyte);
+	cs.disable();
+
+	fx_spi_write_disable();
+	return 1;
+}
+
+int fx_flash_write_fat_sec(void* buf, uint32_t* nbyte, uint32_t blkno)
+{
+	char read_buf[SPI_FLASH_SEC_SIZE] = {0};
+	fx_flash_read(read_buf, SPI_FLASH_SEC_SIZE, blkno);
+
+	fx_spi_Erase_Sector(blkno);
+	return 1;
+}
 
 int fx_flash_write(void* buf, uint32_t* nbyte, uint32_t blkno)
 {
-	fx_spi_Erase_Sector(blkno);
 
 	uint32_t offset = SPI_FLASH_SEC_SIZE * blkno;
 	uint8_t data[4] = {SPI_FLASH_CMD_Write, (offset >> 16) & 0xff, (offset >> 8) & 0xff, offset & 0xff};
-	uint16_t data_size;
+	uint32_t data_size;
 	size_t full_size = *nbyte;
-
+	fx_spi_Erase_Sector(blkno);
 	fx_spi_Set_Block_Protect(0x00);
 	for (size_t i = 0; i < full_size; i += SPI_FLASH_PAGE_SIZE)
 	{

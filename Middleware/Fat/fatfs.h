@@ -40,14 +40,14 @@
 #endif
 #define ASSERT(e)
 
-#define SEC_SIZE    512           /* sector size */
+#define SEC_SIZE    4096           /* sector size */
 #define SEC_INVAL   0xffffffff  /* invalid sector */
 #define EMPTY_BYTE_VAL 0xff
 /*
  * Pre-defined cluster number
  */
 #define CL_ROOT     0       /* cluster 0 means the root directory */
-#define CL_FREE     0xfff       /* cluster 0 also means the free cluster */
+#define CL_FREE     0       /* cluster 0 also means the free cluster */
 #define CL_FIRST    2       /* first legal cluster */
 #define CL_LAST     0xfffffff5  /* last legal cluster */
 #define CL_EOF      0xffffffff  /* EOF cluster */
@@ -210,7 +210,7 @@ struct fatfs_node {
 #define IS_FILE(de) (!IS_DIR(de) && !IS_VOL(de))
 
 #define IS_DELETED(de)  ((de)->name[0] == 0xe5)
-#define IS_EMPTY(de)    (((de)->name[0] == EMPTY_BYTE_VAL))
+#define IS_EMPTY(de)    (((de)->name[0] == EMPTY_BYTE_VAL || (de)->name[0] == 0x0))
 
 int  fat_next_cluster(struct fatfs_vol *fmp, uint32_t cl, uint32_t *next);
 int  fat_set_cluster(struct fatfs_vol *fmp, uint32_t cl, uint32_t next);

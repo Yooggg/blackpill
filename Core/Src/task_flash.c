@@ -201,17 +201,10 @@ void Task_Flash_Func()
 
     fx_init_spi_flash(read_spi, write_spi, rw_spi, cs_en, cs_dis);
 
-	uint8_t dataToWrite[DATA_SIZE] = {0xAB, 0xCD};
-	uint8_t dataRead[DATA_SIZE];
 	fx_spi_flash_Reset();
 	fx_spi_chip_erase();
 
 	fx_spi_flash_get_info(&fi);
-	uint32_t read = 2;
-	uint32_t write = 2;
-	fx_flash_write(dataToWrite, &write,0);
-	fx_flash_read(dataRead, &read,0);
-
 	fatfs_format(&m, 512, sec_buf);
 
 	printf("media: %p, volume: %p\n", (void *)&m, (void *)&volume);
@@ -221,10 +214,16 @@ void Task_Flash_Func()
 	printf("Directory created");
 	fx_thread_sleep(200);
 	fs_dir_open(&volume, "/dir1", &dir);
-	printf("Directory opened");
-	fx_thread_sleep(200);
-	fs_volume_close(&volume);
-	printf("Directory closed");
+	char* filename = "/dir1/file";
+	fs_file_create(&volume, filename);
+	fs_file_t file;
+	char data_w[2] = "ab";
+	char data_r[2];
+	fs_file_open(&volume, &file, filename, 0);
+	size_t size = 0;
+	fs_file_write(&file, data_w, 2, &size);
+	fs_file_open(&volume, &file, filename, 0);
+	fs_file_read(&file, data_r, 2, &size);
 
 	while (1)
 	{

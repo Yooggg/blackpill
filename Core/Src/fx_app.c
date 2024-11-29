@@ -16,7 +16,7 @@ void fx_app_init(void)
 
 	//Task_Flash_Init();
 	static fx_thread_t task_flash;
-	static int stack_flash[8192*4 / sizeof(int)];
+	static int stack_flash[8192*8 / sizeof(int)];
 
 	//fx_mutex_init(&mutex1, FX_MUTEX_CEILING_DISABLED, FX_SYNC_POLICY_DEFAULT);
 
