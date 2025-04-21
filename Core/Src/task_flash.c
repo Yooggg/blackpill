@@ -1,15 +1,13 @@
-#include <stdio.h>
-
-#include "main.h"
-#include "FXRTOS.h"
-#include <stdlib.h>
-#include "../Middleware/Fat/fx_file.h"
-#include "../Middleware/Fat/fatfs.h"
-#include "../Middleware/Fat/fs_media.h"
-#include "../Middleware/Spi_Flash/spi_flash.h"
+#include <fs_data.h>
+#include "task_flash.h"
 
 extern SPI_HandleTypeDef hspi1;
 fx_mutex_t mutex1;
+
+fs_vol_t volume;
+fs_media_t m;
+fs_dir_t dir;
+fs_file_t file;
 
 void* fs_mem_alloc(size_t size)
 {
@@ -25,11 +23,11 @@ void Task_Flash_Init()
 {
 
 	static fx_thread_t task_flash;
-	static int stack_flash[8192 / sizeof(int)];
+	static int stack_flash[8192*8 / sizeof(int)];
 
 	fx_mutex_init(&mutex1, FX_MUTEX_CEILING_DISABLED, FX_SYNC_POLICY_DEFAULT);
 
-	fx_thread_init(&task_flash, Task_Flash_Func, NULL, 11, (void*)stack_flash, sizeof(stack_flash), false);
+	fx_thread_init(&task_flash, Task_Flash_Func, NULL, 10, (void*)stack_flash, sizeof(stack_flash), false);
 }
 
 
@@ -191,8 +189,8 @@ void Task_Flash_Func()
 {
 
 	uint8_t sec_buf[SEC_SIZE];
-	fs_vol_t volume;
-	fs_media_t m;
+//	fs_vol_t volume;
+//	fs_media_t m;
 	flash_info_t fi;
     m.read = fx_read;
     m.write = fx_write;
@@ -209,21 +207,37 @@ void Task_Flash_Func()
 
 	printf("media: %p, volume: %p\n", (void *)&m, (void *)&volume);
 	fs_volume_open(&m, &volume, 0, fs_mem_alloc);
-	fs_dir_t dir;
-	fs_dir_create(&volume, "/dir1");
+//	fs_dir_t dir;
+	fs_dir_create(&volume, "/web");
 	printf("Directory created");
-	fx_thread_sleep(200);
-	fs_dir_open(&volume, "/dir1", &dir);
-	char* filename = "/dir1/file";
-	fs_file_create(&volume, filename);
-	fs_file_t file;
-	char data_w[2] = "ab";
-	char data_r[2];
-	fs_file_open(&volume, &file, filename, 0);
-	size_t size = 0;
-	fs_file_write(&file, data_w, 2, &size);
-	fs_file_open(&volume, &file, filename, 0);
-	fs_file_read(&file, data_r, 2, &size);
+	fs_dir_open(&volume, "/web", &dir);
+	add_fs_item("/web", FS_TYPE_FOLDER);
+	fs_dir_close(&dir);
+
+
+	fs_dir_create(&volume, "/firmware");
+	printf("Directory created");
+	fs_dir_open(&volume, "/firmware", &dir);
+	add_fs_item("/firmware", FS_TYPE_FOLDER);
+	fs_dir_close(&dir);
+
+//	fs_dir_create(&volume, "/dir2");
+//	fs_dir_open(&volume, "/dir2", &dir);
+	//fs_dir_close(&dir);
+
+//	fs_dir_create(&volume, "/dir1/dir3");
+//	fs_dir_open(&volume, "/dir1/dir3", &dir);
+//	fs_dir_close(&dir);
+//	char* filename = "/dir1/file.txt";
+//	fs_file_create(&volume, filename);
+//	//fs_file_t file;
+//	char data_w[2] = "ab";
+//	char data_r[2];
+//	fs_file_open(&volume, &file, filename, 0);
+//	size_t size = 0;
+//	fs_file_write(&file, data_w, 2, &size);
+//	fs_file_open(&volume, &file, filename, 0);
+//	fs_file_read(&file, data_r, 2, &size);
 
 	while (1)
 	{

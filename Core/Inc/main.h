@@ -67,6 +67,14 @@ void Error_Handler(void);
 #define Flash_MISO_GPIO_Port GPIOA
 #define Flash_MOSI_Pin GPIO_PIN_7
 #define Flash_MOSI_GPIO_Port GPIOA
+#define W5500_CS_Pin GPIO_PIN_2
+#define W5500_CS_GPIO_Port GPIOB
+#define W5500_SCK_Pin GPIO_PIN_10
+#define W5500_SCK_GPIO_Port GPIOB
+#define W5500_MISO_Pin GPIO_PIN_14
+#define W5500_MISO_GPIO_Port GPIOB
+#define W5500_MOSI_Pin GPIO_PIN_15
+#define W5500_MOSI_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
