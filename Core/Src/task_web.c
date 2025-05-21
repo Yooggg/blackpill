@@ -31,7 +31,7 @@ uint8_t http_server_socket_list[] = {2, 3, 4, 5};
 uint8_t http_server_tx_buf[1024];
 uint8_t http_server_rx_buf[1024];
 //
-uint8_t http_server_page[] = "<!DOCTYPE html>\
+uint8_t http_upload_page[] = "<!DOCTYPE html>\
 <html lang=\"en\">\
 <head>\
     <meta charset=\"UTF-8\">\
@@ -46,6 +46,186 @@ uint8_t http_server_page[] = "<!DOCTYPE html>\
     </form>\
 </body>\
 </html>";
+
+
+//uint8_t http_explorer_page[] = "<!DOCTYPE html>\
+//<html lang=\"en\">\
+//<head>\
+//    <meta charset=\"UTF-8\">\
+//    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\
+//    <title>Dirs List</title>\
+//    <style>\
+//        body {\
+//            font-family: Arial, sans-serif;\
+//            margin: 20px;\
+//        }\
+//        h1 {\
+//            color: #333;\
+//        }\
+//        ul {\
+//            list-style: none;\
+//            padding: 0;\
+//        }\
+//        ul li {\
+//            padding: 10px;\
+//            margin: 5px 0;\
+//            background: #f4f4f4;\
+//            border: 1px solid #ccc;\
+//        }\
+//    </style>\
+//</head>\
+//<body>\
+//    <h1>Dirs</h1>\
+//    <ul id=\"dirs-list\"></ul>\
+//	<script>\
+//    	const dirsList = document.getElementById('dirs-list');\
+//        function loadDirs() {\
+//            fetch('/api/dirs')\
+//                .then(response => response.json())\
+//                .then(data => {\
+//                    dirsList.innerHTML = '';\
+//                    data.dirs.forEach(dir => {\
+//                        const li = document.createElement('li');\
+//                        li.textContent = dir;\
+//                        dirsList.appendChild(li);\
+//                    });\
+//                })\
+//                .catch(error => {\
+//                    console.error('Error fetching dirs:', error);\
+//                    dirsList.innerHTML = '<li>Error loading dirs</li>';\
+//                });\
+//        }\
+//        loadDirs();\
+//    </script>\
+//</body>\
+//</html>";
+
+const char* http_explorer_page =  "<!DOCTYPE html>\
+		<html lang=\"en\">\
+		<head>\
+		    <meta charset=\"UTF-8\">\
+		    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\
+		    <title>Index of /</title>\
+		    <style>\
+		        body { font-family: Arial, sans-serif; }\
+		        h1 { font-size: 20px; }\
+		        a { text-decoration: none; color: blue; }\
+		        a:hover { text-decoration: underline; }\
+		        #file-list { margin-top: 10px; }\
+				#controls {\
+					margin: 10px 0; display: flex; gap: 10px;\
+				}\
+				.button {\
+				  display: inline-block;\
+				  padding: 6px 12px;\
+				  background: #4285f4;\
+				  color: white;\
+				  border: none;\
+				  border-radius: 4px;\
+				  font-size: 14px;\
+				  cursor: pointer;\
+				  text-align: center;\
+				}\
+				.button:hover {\
+				  background: #0056b3;\
+				}\
+				input[type=\"file\"] {\
+				  display: none;\
+				}\
+				.folder {\
+				  margin-top: 10px;\
+				}\
+		    </style>\
+		</head>\
+		<body>\
+		    <h1>Index of /</h1>\
+		    <hr>\
+			<div class=\"controls\">\
+				<label class=\"button\">\
+					Upload Files\
+					<input type=\"file\" id=\"fileInput\" multiple />\
+    			</label>\
+    			<button class=\"button\" onclick=\"createFolder()\">Create folder</button>\
+  	  	  	</div>\
+		    <div id=\"file-list\">Loading...</div>\
+		    <hr>\
+		    <script>\
+				function joinPaths(...parts) {\
+				  return parts\
+					.map(part => part.replace(/^\\/+|\\/+$/g, ''))\
+					.filter(Boolean)\
+					.join('/');\
+				}\
+				document.getElementById(\"fileInput\").addEventListener(\"change\", async function () {\
+				  const files = this.files;\
+				  for (let file of files) {\
+					const formData = new FormData();\
+					formData.append(\"file\", file);\
+					await fetch(\"api/upload.cgi\", {\
+					  method: \"POST\",\
+					  body: formData\
+					});\
+				  }\
+				  loadFiles();\
+				});\
+				function createFolder() {\
+				    const folderName = prompt(\"Enter the name of directory:\");\
+				    if (!folderName) return;\
+				    fetch(\"/api/mkdir.cgi?name=\" + encodeURIComponent(folderName))\
+				        .then(res => {\
+							if (res.ok) {\
+								alert(\"Folder created!\");\
+								loadFiles();\
+							} else {\
+								alert(\"Error\");\
+							}\
+				        });\
+				    }\
+		        async function loadFiles(path = \"\") {\
+		            try {\
+						const depth = path === \"\" ? 0 : path.split(\"\").filter(Boolean).length;\
+		                const response = await fetch(`list.cgi?path=${encodeURIComponent(path ? '/' + path : '')}`, {\
+            				headers: {\
+                			\"X-Depth-Level\": depth.toString()\
+            				}\
+        				});\
+		                if (!response.ok) throw new Error(\"Network response was not ok\");\
+		                const data = await response.json();\
+						console.log(data);\
+		                let listDiv = document.getElementById(\"file-list\");\
+		                listDiv.innerHTML = \"\";\
+		                if (path) {\
+            				const parentPath = path.includes(\"/\")\
+                				? path.substring(0, path.lastIndexOf(\"/\"))\
+                				: \"\";\
+            				listDiv.innerHTML += `<div><a href=\"#\" onclick=\"loadFiles('${parentPath}')\">../</a></div>`;\
+        				}\
+						data.folders.forEach(folder => {\
+							const folderPath = joinPaths(path, folder);\
+							listDiv.innerHTML += `\
+								<div>\
+									<a href=\"#\" onclick=\"loadFiles('${folderPath}')\">${folder}/</a>\
+								</div>`;\
+						});\
+						data.files.forEach(file => {\
+							const filePath = joinPaths(path, file);\
+							listDiv.innerHTML += `\
+								<div>\
+									<a href=\"${filePath}\">${file}</a>\
+								</div>`;\
+						});\
+		            } catch (error) {\
+		                document.getElementById(\"file-list\").innerText = \"Error loading files!\";\
+		            }\
+		        }\
+				\
+		        loadFiles();\
+		    </script>\
+		</body>\
+		</html>";
+
+
+
 //
 //wiz_NetInfo net_info = {
 //		.mac  = { 0xEA, 0x11, 0x22, 0x33, 0x44, 0xEA },
@@ -93,60 +273,6 @@ void Task_Web_Init()
 	//fx_thread_init(&task, Task_Flash_Check, NULL, 11, (void*)stack, sizeof(stack), false);
 }
 
-/*
-void Callback_IPAssigned(void) {
-    printf("Callback: IP assigned! Leased time: %lu sec\r\n", getDHCPLeasetime());
-    ip_assigned = true;
-}
-
-void Callback_IPConflict(void) {
-	printf("Callback: IP conflict!\r\n");
-}
-*/
-
-//void W5500_CriticalEnter()
-//{
-//    fx_mutex_acquire(&mutex, NULL);
-//}
-//
-//void W5500_CriticalExit()
-//{
-//    fx_mutex_release(&mutex);
-//}
-//
-//void W5500_ChipSelect()
-//{
-//	__HAL_SPI_ENABLE(&W5500_SPI);
-//}
-//
-//void W5500_ChipDeselect()
-//{
-//	__HAL_SPI_DISABLE(&W5500_SPI);
-//}
-//
-//uint8_t W5500_ReadByte(void) {
-//    uint8_t data;
-//    HAL_SPI_Receive(&W5500_SPI, &data, 1, HAL_MAX_DELAY);
-//    return data;
-//}
-//
-//void W5500_WriteByte(uint8_t data) {
-//    HAL_SPI_Transmit(&W5500_SPI, &data, 1, HAL_MAX_DELAY);
-//}
-//
-//void W5500_ReadBuff(uint8_t* buff, uint16_t len) {
-//    HAL_SPI_Receive(&W5500_SPI, buff, len, HAL_MAX_DELAY);
-//}
-//
-//void W5500_WriteBuff(uint8_t* buff, uint16_t len) {
-//    HAL_SPI_Transmit(&W5500_SPI, buff, len, HAL_MAX_DELAY);
-//}
-
-//int Callback_Timer_1s()
-//{
-//	timer1secEvent = true;
-//	return 0;
-//}
 
 volatile bool ip_assigned = false;
 
@@ -250,107 +376,11 @@ void Task_Web_Func()
 	wizchip_setnetinfo(&net_info);
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//	printf("Calling DNS_init()...\r\n");
-//	DNS_init(DNS_SOCKET, dns_buffer);
-//
-//	uint8_t addr[4];
-//	{
-//	    char domain_name[] = "some.me";
-//	    printf("Resolving domain name \"%s\"...\r\n", domain_name);
-//	    int8_t res = DNS_run(dns, (uint8_t*)&domain_name, addr);
-//	    if(res != 1) {
-//	        printf("DNS_run() failed, res = %d", res);
-//	        return;
-//	    }
-//	    printf("Result: %d.%d.%d.%d\r\n",
-//	                addr[0], addr[1], addr[2], addr[3]);
-//	}
-//
-//
-//	printf("Creating socket...\r\n");
-//	uint8_t http_socket = HTTP_SOCKET;
-//	uint8_t code = socket(http_socket, Sn_MR_TCP, 10888, 0);
-//	if(code != http_socket) {
-//	    printf("socket() failed, code = %d\r\n", code);
-//	    return;
-//	}
-//
-//	printf("Socket created, connecting...\r\n");
-//	code = connect(http_socket, addr, 80);
-//	if(code != SOCK_OK) {
-//	    printf("connect() failed, code = %d\r\n", code);
-//	    close(http_socket);
-//	    return;
-//	}
-//
-//	char req[] = "GET / HTTP/1.0\r\nHost: some.me\r\n\r\n";
-//	uint16_t len = sizeof(req) - 1;
-//	uint8_t* buff = (uint8_t*)&req;
-//	while(len > 0) {
-//	    printf("Sending %d bytes...\r\n", len);
-//	    int32_t nbytes = send(http_socket, buff, len);
-//	    if(nbytes <= 0) {
-//	        printf("send() failed, %d returned\r\n", nbytes);
-//	        close(http_socket);
-//	        return;
-//	    }
-//	    printf("%d bytes sent!\r\n", nbytes);
-//	    len -= nbytes;
-//	}
-//
-//
-//	char buff1[32];
-//	for(;;) {
-//	    int32_t nbytes = recv(http_socket,
-//	                          (uint8_t*)&buff1, sizeof(buff1)-1);
-//	    if(nbytes == SOCKERR_SOCKSTATUS) {
-//	        printf("\r\nConnection closed.\r\n");
-//	        break;
-//	    }
-//
-//	    if(nbytes <= 0) {
-//	        printf("\r\nrecv() failed, %d returned\r\n", nbytes);
-//	        break;
-//	    }
-//
-//	    buff1[nbytes] = '\0';
-//	    printf("%s", buff1);
-//	}
-//
-//	printf("Closing socket.\r\n");
-//	close(http_socket);
-
-
-
-
-
-
-
-
-
-
 	uint8_t buffer[2048];
 
 	httpServer_init(http_server_tx_buf, http_server_rx_buf, 4, http_server_socket_list);
-	reg_httpServer_webContent("test_page.html", http_server_page);
+	//reg_httpServer_webContent("upload_file.html", http_upload_page);
+	reg_httpServer_webContent("index.html", http_explorer_page);
 	while(1){
 		//fx_thread_yield();
 		httpServer_run(http_server_socket_list[0]);
@@ -365,169 +395,7 @@ void Task_Web_Func()
 		        close(0);
 		    }
 	}
-	//printf("\n\r HTTP server is working\r\n");
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//	wiz_PhyConf phyconf;
-//
-//	fx_thread_sleep(1500);
-//
-//	W5500_ChipDeselect();
-//
-//	printf("Registering W5500 callbacks...\r\n");
-//	reg_wizchip_cris_cbfunc(W5500_CriticalEnter, W5500_CriticalExit);
-//	reg_wizchip_cs_cbfunc(W5500_ChipSelect, W5500_ChipDeselect);
-//	reg_wizchip_spi_cbfunc(W5500_ReadByte, W5500_WriteByte);
-//	reg_wizchip_spiburst_cbfunc(W5500_ReadBuff, W5500_WriteBuff);
-//
-//	fx_timer_init(&timer_1s, Callback_Timer_1s, NULL);
-//	fx_timer_set_abs(&timer_1s, 1000, 1000);
-//
-//	while (1)
-//	{
-//		fx_thread_yield();
-//
-//		// События 1 раз всекунду
-//		if (timer1secEvent)
-//		{
-//			timer1secEvent = false;
-//
-//			httpServer_time_handler();
-//			httpServer_run(http_server_socket_list[0]);
-//
-//			DHCP_time_handler();
-//			dhcpState = DHCP_run();
-//			if (dhcpState == DHCP_IP_CHANGED)
-//			{
-//				dhcpIpChangedEvent = true;
-//			}
-//
-//			bool linkOn_new = wizphy_getphylink() == PHY_LINK_ON ? true : false;
-//			if (linkOn != linkOn_new)
-//			{
-//				// состояние изменилось
-//				if (linkOn_new)
-//				{
-//					// Connect
-//				}
-//				else
-//				{
-//					// Disconnect
-//					linkDisconnectedEvent = true;
-//				}
-//
-//				linkOn = linkOn_new;
-//			}
-//		}
-//
-//		// Если нет связи - перезапускаемся
-//		if (linkDisconnectedEvent)
-//		{
-//			linkDisconnectedEvent = false;
-//			webState = WB_INIT;
-//
-//			// Тут надо закрыть все соединения и сервисы
-//			DHCP_stop();
-//			printf("Link Off\r\n");
-//		};
-//
-//		// Отработаем текущее состояние
-//		switch (webState) {
-//
-//			case WB_INIT:
-//				printf("Calling wizchip_init()...\r\n");
-//				wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
-//
-//				webState = WB_WAIT_LINK;
-//				break;
-//
-//			case WB_WAIT_LINK:
-//				if (linkOn)
-//				{
-//					dhcpIpChangedEvent = false;
-//					printf("\r\nLink On:");
-//
-//					wizphy_getphystat(&phyconf);
-//					printf(" %s Mbit/s,", phyconf.speed == PHY_SPEED_100 ? "100" : "10");
-//					printf(" %s duplex", phyconf.duplex == PHY_DUPLEX_FULL ? "Full" : "Half");
-//
-//					printf("\r\n\r\n");
-//
-//					printf("Calling DHCP_init()...\r\n");
-//					// set MAC address before using DHCP
-//					setSHAR(net_info.mac);
-//					DHCP_init(DHCP_SOCKET, dhcp_buffer);
-//					webState = WB_WAIT_DHCP;
-//				};
-//				break;
-//
-//			case WB_WAIT_DHCP:
-//				if (dhcpState == DHCP_IP_LEASED)
-//				{
-//					// получили IP - выходим на рабочий цикл
-//			        printf("DHCP IP LEASED\r\n");
-//
-//			        getIPfromDHCP(net_info.ip);
-//			        getGWfromDHCP(net_info.gw);
-//			        getSNfromDHCP(net_info.sn);
-//			        getDNSfromDHCP(net_info.dns);
-//
-//			        printf(
-//			  	      "IP:  %d.%d.%d.%d\r\n"
-//			  	      "GW:  %d.%d.%d.%d\r\n"
-//			  	      "Net: %d.%d.%d.%d\r\n"
-//			  	      "DNS: %d.%d.%d.%d\r\n",
-//			  	      net_info.ip[0],  net_info.ip[1],  net_info.ip[2],  net_info.ip[3],
-//			  	      net_info.gw[0],  net_info.gw[1],  net_info.gw[2],  net_info.gw[3],
-//			  	      net_info.sn[0],  net_info.sn[1],  net_info.sn[2],  net_info.sn[3],
-//					  net_info.dns[0], net_info.dns[1], net_info.dns[2], net_info.dns[3]
-//			        );
-//
-//			        printf("Calling wizchip_setnetinfo()...\r\n");
-//			        wizchip_setnetinfo(&net_info);
-//
-//			        webState = WB_WORK_INIT;
-//				}
-//				break;
-//
-//			case WB_WORK_INIT:
-//				// Инициализация сервисов, например, HTTP-сервера
-//				httpServer_init(http_server_tx_buf, http_server_rx_buf, 4, http_server_socket_list);
-//				reg_httpServer_webContent("test_page.html", http_server_page);
-//				httpServer_run(http_server_socket_list[0]);
-//
-//				webState = WB_WORK;
-//				break;
-//
-//			case WB_WORK:
-//				break;
-//
-//			default:
-//				break;
-//		};
-//
-//	};
-
-//		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
-//		fx_thread_sleep(700);
-//
-//		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
-//		fx_thread_sleep(100);
-//	}
 }
 
 void handle_post_request(uint8_t* buffer, uint16_t len) {

@@ -1,3 +1,4 @@
+#include <fs_data.h>
 #include "task_flash.h"
 
 extern SPI_HandleTypeDef hspi1;
@@ -207,10 +208,26 @@ void Task_Flash_Func()
 	printf("media: %p, volume: %p\n", (void *)&m, (void *)&volume);
 	fs_volume_open(&m, &volume, 0, fs_mem_alloc);
 //	fs_dir_t dir;
-	fs_dir_create(&volume, "/dir1");
+	fs_dir_create(&volume, "/web");
 	printf("Directory created");
-	fx_thread_sleep(200);
-	fs_dir_open(&volume, "/dir1", &dir);
+	fs_dir_open(&volume, "/web", &dir);
+	add_fs_item("/web", FS_TYPE_FOLDER);
+	fs_dir_close(&dir);
+
+
+	fs_dir_create(&volume, "/firmware");
+	printf("Directory created");
+	fs_dir_open(&volume, "/firmware", &dir);
+	add_fs_item("/firmware", FS_TYPE_FOLDER);
+	fs_dir_close(&dir);
+
+//	fs_dir_create(&volume, "/dir2");
+//	fs_dir_open(&volume, "/dir2", &dir);
+	//fs_dir_close(&dir);
+
+//	fs_dir_create(&volume, "/dir1/dir3");
+//	fs_dir_open(&volume, "/dir1/dir3", &dir);
+//	fs_dir_close(&dir);
 //	char* filename = "/dir1/file.txt";
 //	fs_file_create(&volume, filename);
 //	//fs_file_t file;
