@@ -210,9 +210,6 @@ void Task_Flash_Func()
 	  0xff, 0x45, 0x7f, 0x94, 0xaf, 0xfe, 0xb5, 0xb4, 0x01, 0x00, 0x00
 	};
 
-	//char data_w[2] = "ab";
-
-
 
 	uint8_t sec_buf[SEC_SIZE];
 //	fs_vol_t volume;
@@ -238,17 +235,17 @@ void Task_Flash_Func()
 	fs_dir_open(&volume, "/web", &dir);
 	fs_dir_close(&dir);
 	add_fs_item("/web", FS_TYPE_FOLDER);
-	char* filename = "/web/index.txt";
+	char* filename = "/web/index.js.gz";
 	fs_dir_open(&volume, "/web", &dir);
 	fs_file_create(&volume, filename);
 	//fs_file_t file;
-	char data_w[2] = "ab";
-	char data_r[2];
+	//char data_w[2] = "ab";
+	char data_r[299];
 	fs_file_open(&volume, &file, filename, 0);
 	size_t size = 0;
-	fs_file_write(&file, data_w, 2, &size);
+	fs_file_write(&file, index_html, 299, &size);
 	fs_file_open(&volume, &file, filename, 0);
-	fs_file_read(&file, data_r, 2, &size);
+	fs_file_read(&file, data_r, 299, &size);
 	fs_dir_close(&dir);
 
 

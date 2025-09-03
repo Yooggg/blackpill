@@ -104,42 +104,98 @@ fat_compare_name(char *n1, char *n2)
 int
 fat_valid_name(char *name)
 {
+//	 							was
+//    static char invalid_char[] = "*?<>|\"+=,;[] \345";
+//    int len = 0;
+//
+//    /* . or .. */
+//    if (*name == '.') {
+//        name++;
+//        if (*name == '.')
+//            name++;
+//        return (*(name + 1) == '\0') ? 1 : 0;
+//    }
+//    /* First char must be alphabet or numeric */
+//    if (!isalnum((int)*name))
+//        return 0;
+//    while (*name != '\0') {
+//        if (strchr(invalid_char, *name))
+//            return 0;
+//        if (*name == '.')
+//            break;  /* Start of extension */
+//        if (++len > 8)
+//            return 0;   /* Too long name */
+//        name++;
+//    }
+//    if (*name == '\0')
+//        return 1;
+//    name++;
+//    if (*name == '\0')  /* Empty extension */
+//        return 1;
+//    len = 0;
+//
+//    while (*name != '\0') {
+//        if (strchr(invalid_char, *name))
+//            return 0;
+//        if (*name == '.')
+//            return 0;   /* Second extention */
+//        if (++len > 3)
+//            return 0;   /* Too long name */
+//        name++;
+//    }
+//    						become
     static char invalid_char[] = "*?<>|\"+=,;[] \345";
-    int len = 0;
+	int len = 0;
 
-    /* . or .. */
-    if (*name == '.') {
-        name++;
-        if (*name == '.')
-            name++;
-        return (*(name + 1) == '\0') ? 1 : 0;
-    }
-    /* First char must be alphabet or numeric */
-    if (!isalnum((int)*name))
-        return 0;
-    while (*name != '\0') {
-        if (strchr(invalid_char, *name))
-            return 0;
-        if (*name == '.')
-            break;  /* Start of extension */
-        if (++len > 8)
-            return 0;   /* Too long name */
-        name++;
-    }
-    if (*name == '\0')
-        return 1;
-    name++;
-    if (*name == '\0')  /* Empty extension */
-        return 1;
-    len = 0;
-    while (*name != '\0') {
-        if (strchr(invalid_char, *name))
-            return 0;
-        if (*name == '.')
-            return 0;   /* Second extention */
-        if (++len > 3)
-            return 0;   /* Too long name */
-        name++;
-    }
+	/* . or .. */
+	if (*name == '.') {
+		name++;
+		if (*name == '.')
+			name++;
+		return (*(name + 1) == '\0') ? 1 : 0;
+	}
+	/* First char must be alphabet or numeric */
+	if (!isalnum((int)*name))
+		return 0;
+	while (*name != '\0') {
+		if (strchr(invalid_char, *name))
+			return 0;
+		if (*name == '.')
+			break;  /* Start of extension */
+		if (++len > 11)
+			return 0;   /* Too long name */
+		name++;
+	}
+	if (*name == '\0')
+		return 1;
+	name++;
+	if (*name == '\0')  /* Empty extension */
+		return 1;
+
+	while (*name != '\0') {
+		if (strchr(invalid_char, *name))
+			return 0;
+		if (*name == '.'){ /* Second extention */
+			if (*name == '\0')
+					return 1;
+			name++;
+			if (*name == '\0')  /* Empty extension */
+				return 1;
+
+			while (*name != '\0') {
+				if (strchr(invalid_char, *name))
+					return 0;
+				if (*name == '.')
+					return 0;
+				if (++len > 11)
+					return 0;   /* Too long name */
+				name++;
+			}
+		}
+		if (++len > 11)
+			return 0;   /* Too long name */
+		name++;
+	}
+
     return 1;
 }
