@@ -5,8 +5,11 @@
 
 #include <stdint.h>
 
+
 #ifndef	__HTTPSERVER_H__
 #define	__HTTPSERVER_H__
+
+#include "../../../Wiznet/Ethernet/wizchip_conf.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,9 +23,13 @@ extern "C" {
 #define MOBILE_INITIAL_WEBPAGE		"mobile/index.html"
 
 /* Web Server Content Storage Select */
-//#define _USE_SDCARD_
+#define _USE_SDCARD_
 #ifndef _USE_SDCARD_
 //#define _USE_FLASH_
+#endif
+
+#ifdef _USE_SDCARD_
+#include "ff.h"
 #endif
 
 #if !defined(_USE_SDCARD_) && !defined(_USE_FLASH_)
@@ -41,6 +48,7 @@ extern "C" {
 #define STATE_HTTP_REQ_DONE    		2           /* The end of HTTP request parse */
 #define STATE_HTTP_RES_INPROC  		3           /* Sending the HTTP response to HTTP client (in progress) */
 #define STATE_HTTP_RES_DONE    		4           /* The end of HTTP response send (HTTP transaction ended) */
+#define STATE_HTTP_UPLOAD  5  // После STATE_HTTP_RES_DONE
 
 /*********************************************
 * HTTP Simple Return Value
@@ -75,6 +83,13 @@ typedef struct _st_http_socket
 	uint32_t 		file_len;
 	uint32_t 		file_offset; // (start addr + sent size...)
 	uint8_t			storage_type; // Storage type; Code flash, SDcard, Data flash ...
+#ifdef _USE_SDCARD_
+    FIL upload_file;
+    uint32_t upload_content_length;
+    uint32_t upload_bytes_received;
+    uint32_t upload_bytes_written;
+    uint8_t upload_active;
+#endif
 }st_http_socket;
 
 // Web content structure for file in code flash memory
@@ -87,6 +102,7 @@ typedef struct _httpServer_webContent
 	uint8_t * 	content;
 }httpServer_webContent;
 
+extern uint8_t HTTPSock_Num[_WIZCHIP_SOCK_NUM_];
 
 void httpServer_init(uint8_t * tx_buf, uint8_t * rx_buf, uint8_t cnt, uint8_t * socklist);
 void reg_httpServer_cbfunc(void(*mcu_reset)(void), void(*wdt_reset)(void));

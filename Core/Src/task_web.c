@@ -431,49 +431,6 @@ void Task_Web_Func()
 	while(1){
 		//fx_thread_yield();
 		httpServer_run(http_server_socket_list[0]);
-		if (getSn_SR(0) == SOCK_ESTABLISHED) {
-		        int16_t len = getSn_RX_RSR(0); // Получаем количество данных
-		        if (len > 0) {
-		            len = recv(0, buffer, sizeof(buffer)); // Читаем данные
-		            handle_post_request(buffer, len); // Обрабатываем POST-запрос
-		        }
-		    } else if (getSn_SR(0) == SOCK_CLOSE_WAIT) {
-		        disconnect(0);
-		        close(0);
-		    }
 	}
 
-}
-
-void handle_post_request(uint8_t* buffer, uint16_t len) {
-    // Проверяем заголовок на наличие "multipart/form-data"
-    if (strstr((char*)buffer, "Content-Type: multipart/form-data")) {
-        char* boundary = strstr((char*)buffer, "boundary=");
-        if (boundary) {
-            boundary += 9; // Пропускаем "boundary="
-            char boundary_str[128] = {0};
-            sscanf(boundary, "%127s", boundary_str); // Считываем boundary
-
-            // Найти начало данных файла
-            char* file_data = strstr((char*)buffer, "\r\n\r\n");
-            if (file_data) {
-                file_data += 4; // Пропускаем заголовки
-
-                // Открыть файл на запись
-                FILE* fp = fopen("uploaded_file.bin", "wb");
-                if (fp) {
-                    fwrite(file_data, 1, len - (file_data - (char*)buffer), fp);
-                    fclose(fp);
-                }
-            }
-        }
-    }
-
-    // Отправить ответ клиенту
-    const char* response = "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "Content-Length: 2\r\n"
-                           "\r\n"
-                           "OK";
-    send(0, (uint8_t*)response, strlen(response));
 }

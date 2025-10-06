@@ -6,6 +6,7 @@
  */
 
 #include "../../../Wiznet/Internet/httpServer/httpUtil.h"
+#include "../../../Wiznet/Ethernet/wizchip_conf.h"
 #include "ff.h"  // FatFS header
 #include <stdio.h>
 #include <string.h>
@@ -180,9 +181,28 @@ uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_
 /**
  * @brief Обработчик POST запросов (загрузка файлов)
  */
-uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_request,
+uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p_http_request,
                                uint8_t * buf, uint32_t * file_len)
 {
+	// Declare externs OUTSIDE any block
+	extern st_http_socket HTTPSock_Status[_WIZCHIP_SOCK_NUM_];
+	extern uint8_t HTTPSock_Num[_WIZCHIP_SOCK_NUM_];
+
+	int8_t seq = -1;
+
+	// Find sequence number
+	for(int i = 0; i < _WIZCHIP_SOCK_NUM_; i++) {
+		if(HTTPSock_Num[i] == s) {
+			seq = i;
+			break;
+		}
+	}
+
+	if(seq == -1) {
+		printf("[HTTP] ERROR: Invalid socket\r\n");
+		return HTTP_FAILED;
+	}
+
 	// === API: Создание папки ===
 	if (strncmp((char*)uri_name, "api/mkdir.cgi", 13) == 0)
 	{
@@ -208,22 +228,32 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 	// === API: Загрузка файла ===
 	else if (strncmp((char*)uri_name, "api/upload.cgi", 14) == 0)
 	{
+		// === API: Потоковая загрузка файла (НОВАЯ ВЕРСИЯ) ===
+
+		// Нужен доступ к HTTPSock_Status - объявляем extern
+		extern st_http_socket HTTPSock_Status[_WIZCHIP_SOCK_NUM_];
+		extern uint8_t * pHTTP_RX;
+
 		// Получаем путь из query параметра
 		char upload_path[128] = "";
 		get_query_param((char*)p_http_request->URI, "path", upload_path, sizeof(upload_path));
 
-		printf("[HTTP] Upload path from URI: %s\r\n", upload_path);
+		printf("[HTTP] Streaming upload request to: %s\r\n", upload_path);
 
 		// Парсим HTTP запрос
 		post_request_t request;
 		if (!disassemble_post_request(p_http_request, &request)) {
 			printf("[HTTP] Failed to parse POST request\r\n");
+			strcpy((char*)buf, "PARSE_ERROR");
+			*file_len = strlen((char*)buf);
 			return HTTP_FAILED;
 		}
 
-		// Проверяем что Content-Length корректный
-		if (request.content_length == 0 || request.content_length > 10000000) {
+		// Проверка размера
+		if (request.content_length == 0 || request.content_length > 50000000) {
 			printf("[HTTP] Invalid Content-Length: %lu\r\n", request.content_length);
+			strcpy((char*)buf, "INVALID_SIZE");
+			*file_len = strlen((char*)buf);
 			return HTTP_FAILED;
 		}
 
@@ -232,16 +262,17 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 		char *filename_start = strstr((char*)request.content_disposition, "filename=\"");
 
 		if (!filename_start) {
-			printf("[HTTP] Filename not found in request\r\n");
+			printf("[HTTP] Filename not found\r\n");
+			strcpy((char*)buf, "NO_FILENAME");
+			*file_len = strlen((char*)buf);
 			return HTTP_FAILED;
 		}
 
-		filename_start += 10; // Пропускаем 'filename="'
-
+		filename_start += 10;
 		int filename_length = 0;
 		while(*filename_start && (*filename_start != '"') &&
-		      (*filename_start != '\r') && (*filename_start != '\n') &&
-		      filename_length < 126) {
+			  (*filename_start != '\r') && (*filename_start != '\n') &&
+			  filename_length < 126) {
 			filename[filename_length++] = *filename_start++;
 		}
 		filename[filename_length] = '\0';
@@ -253,78 +284,91 @@ uint8_t http_post_cgi_handler(uint8_t * uri_name, st_http_request * p_http_reque
 
 			// Создаем директорию если нужно
 			if (strcmp(full_path, "/") != 0) {
+				size_t len = strlen(full_path);
+				if (len > 1 && full_path[len-1] == '/') {
+					full_path[len-1] = '\0';
+				}
+
 				FRESULT res = f_mkdir(full_path);
 				if (res == FR_OK) {
 					printf("[HTTP] Directory created: %s\r\n", full_path);
-				} else if (res == FR_EXIST) {
-					printf("[HTTP] Directory already exists: %s\r\n", full_path);
-				} else {
-					printf("[HTTP] Failed to create directory: %s (error %d)\r\n", full_path, res);
+				} else if (res != FR_EXIST) {
+					printf("[HTTP] Warning: Failed to create directory: %s (error %d)\r\n", full_path, res);
 				}
-			}
 
-			// Добавляем имя файла к пути
-			if (full_path[strlen(full_path)-1] != '/') {
 				strcat(full_path, "/");
 			}
+
 			strcat(full_path, filename);
 		} else {
-			strcpy(full_path, filename);
+			sprintf(full_path, "/%s", filename);
 		}
 
-		printf("[HTTP] Uploading file: %s\r\n", full_path);
+		printf("[HTTP] Starting streaming upload: %s\r\n", full_path);
+		printf("[HTTP] Total size: %lu bytes\r\n", request.content_length);
 
-		// Вычисляем ПРАВИЛЬНЫЙ размер файла
-		uint32_t content_size = 0;
+		// === ОТКРЫВАЕМ ФАЙЛ ДЛЯ ПОТОКОВОЙ ЗАПИСИ ===
+		FRESULT res = f_open(&HTTPSock_Status[seq].upload_file,
+							 full_path,
+							 FA_CREATE_ALWAYS | FA_WRITE);
 
-		if (request.content_start && request.content_end) {
-			// КРИТИЧНО: правильное вычисление размера
-			if (request.content_end > request.content_start) {
-				content_size = (uint32_t)(request.content_end - request.content_start);
-			} else {
-				printf("[HTTP] ERROR: Invalid content boundaries\r\n");
+		if (res != FR_OK) {
+			printf("[HTTP] Failed to open file (error %d)\r\n", res);
+			sprintf((char*)buf, "FILE_ERROR_%d", res);
+			*file_len = strlen((char*)buf);
+			return HTTP_FAILED;
+		}
+
+		printf("[HTTP] File opened successfully\r\n");
+
+		// === ВЫЧИСЛЯЕМ РАЗМЕР ДАННЫХ В ПЕРВОМ ПАКЕТЕ ===
+		uint32_t data_in_first_packet = 0;
+
+		if (request.content_end > request.content_start) {
+			data_in_first_packet = (uint32_t)(request.content_end - request.content_start);
+		}
+
+		printf("[HTTP] Data in first packet: %lu bytes\r\n", data_in_first_packet);
+
+		// === ЗАПИСЫВАЕМ ДАННЫЕ ИЗ ПЕРВОГО ПАКЕТА ===
+		UINT bytes_written = 0;
+		if (data_in_first_packet > 0) {
+			res = f_write(&HTTPSock_Status[seq].upload_file,
+						 request.content_start,
+						 data_in_first_packet,
+						 &bytes_written);
+
+			if (res != FR_OK) {
+				printf("[HTTP] Failed to write first chunk (error %d)\r\n", res);
+				f_close(&HTTPSock_Status[seq].upload_file);
+				sprintf((char*)buf, "WRITE_ERROR_%d", res);
+				*file_len = strlen((char*)buf);
 				return HTTP_FAILED;
 			}
-		} else {
-			printf("[HTTP] ERROR: Content boundaries not found\r\n");
-			return HTTP_FAILED;
+
+			printf("[HTTP] Written first chunk: %u bytes\r\n", bytes_written);
 		}
 
-		// Проверка адекватности размера
-		if (content_size == 0 || content_size > 5000000) {  // Макс 5 МБ
-			printf("[HTTP] ERROR: Invalid file size: %lu bytes\r\n", content_size);
-			return HTTP_FAILED;
-		}
+		// === ИНИЦИАЛИЗИРУЕМ СОСТОЯНИЕ ПОТОКОВОЙ ЗАГРУЗКИ ===
+		HTTPSock_Status[seq].upload_active = 1;
+		HTTPSock_Status[seq].upload_content_length = request.content_length;
 
-		printf("[HTTP] File size: %lu bytes\r\n", content_size);
+		// === КРИТИЧНО: Считаем ТОЛЬКО данные файла, БЕЗ заголовков! ===
+		HTTPSock_Status[seq].upload_bytes_received = data_in_first_packet;  // Только данные
+		HTTPSock_Status[seq].upload_bytes_written = bytes_written;
 
-		// Открываем файл для записи
-		FIL file;
-		FRESULT res = f_open(&file, full_path, FA_CREATE_ALWAYS | FA_WRITE);
+		// === ПЕРЕВОДИМ СОКЕТ В РЕЖИМ ПОТОКОВОЙ ЗАГРУЗКИ ===
+		HTTPSock_Status[seq].sock_status = STATE_HTTP_UPLOAD;
 
-		if (res != FR_OK) {
-			printf("[HTTP] Failed to open file: %s (error %d)\r\n", full_path, res);
-			return HTTP_FAILED;
-		}
+		printf("[HTTP] Switched to streaming mode. Received: %lu / %lu\r\n",
+			   HTTPSock_Status[seq].upload_bytes_received,
+			   HTTPSock_Status[seq].upload_content_length);
 
-		// Записываем данные
-		UINT bytes_written = 0;
-		res = f_write(&file, request.content_start, content_size, &bytes_written);
+		// === КРИТИЧНО: НЕ ОТПРАВЛЯЕМ ОТВЕТ СЕЙЧАС ===
+		// Ответ будет отправлен в httpServer.c когда вся загрузка завершится
 
-		if (res != FR_OK) {
-			printf("[HTTP] Failed to write file (error %d)\r\n", res);
-			f_close(&file);
-			return HTTP_FAILED;
-		}
-
-		// Закрываем файл
-		f_close(&file);
-
-		printf("[HTTP] File uploaded successfully (%lu bytes written)\r\n", bytes_written);
-
-		// Отправляем ответ
-		strcpy((char*)buf, "OK");
-		*file_len = 2;
+		// Возвращаем специальный код что загрузка началась
+		*file_len = 0;
 		return HTTP_OK;
 	}
 
@@ -423,7 +467,7 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 
 	printf("[HTTP] Content-Length: %lu\r\n", request->content_length);
 
-	if (request->content_length == 0 || request->content_length > 10000000) {
+	if (request->content_length == 0 || request->content_length > 50000000) {
 		printf("[HTTP] ERROR: Invalid Content-Length: %lu\r\n", request->content_length);
 		return HTTP_FAILED;
 	}
@@ -435,10 +479,10 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 		return HTTP_FAILED;
 	}
 
-	// === 3. Content-Type (опционально) ===
+	// === 3. Content-Type (optional) ===
 	request->content_type = strstr(request->content_disposition, "Content-Type:");
 
-	// === 4. Начало данных ===
+	// === 4. Начало данных файла ===
 	char* search_start = request->content_disposition;
 	if (request->content_type) {
 		search_start = request->content_type;
@@ -451,26 +495,31 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 	}
 	request->content_start += 4;
 
-	// === 5. КОНЕЦ данных - НЕ ИЩЕМ! Вычисляем по размеру ===
+	// === 5. КОНЕЦ данных - ТОЛЬКО ДЛЯ ПЕРВОГО ПАКЕТА! ===
 
-	// Находим размер заголовков до начала данных
-	uint32_t header_size = (uint32_t)(request->content_start - uri);
+	// КРИТИЧНО: Ищем boundary в данных
+	char* boundary_in_data = strstr(request->content_start, "\r\n--");
 
-	// Размер данных файла = Content-Length минус заголовки минус boundary в конце
-	// Boundary обычно ~50 байт (--boundary--\r\n)
-	// Для безопасности вычтем 100 байт
-	uint32_t boundary_overhead = 100;
-
-	if (request->content_length > boundary_overhead) {
-		uint32_t file_data_size = request->content_length - boundary_overhead;
-
-		// Конец данных = начало + размер данных файла
-		request->content_end = request->content_start + file_data_size;
-
-		printf("[HTTP] Calculated file size: %lu bytes\r\n", file_data_size);
+	if (boundary_in_data) {
+		// Boundary найден - значит весь файл поместился в первый пакет
+		request->content_end = boundary_in_data;
+		printf("[HTTP] Small file: boundary found in first packet\r\n");
 	} else {
-		printf("[HTTP] ERROR: Content too small\r\n");
-		return HTTP_FAILED;
+		// Boundary НЕ найден - файл больше буфера
+		// Берем все данные до конца буфера (4096 байт)
+
+		// Вычисляем размер буфера
+		extern uint8_t * pHTTP_RX;
+		uint32_t buffer_size = 4096;  // Размер RX буфера httpServer
+
+		// Конец первого пакета = начало буфера + размер буфера
+		char* buffer_start = (char*)pHTTP_RX;
+		request->content_end = buffer_start + buffer_size;
+
+		// Но не выходим за пределы данных
+		uint32_t available = (uint32_t)(request->content_end - request->content_start);
+
+		printf("[HTTP] Large file: taking all available data (%lu bytes)\r\n", available);
 	}
 
 	// === 6. Валидация ===
@@ -480,7 +529,7 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 	}
 
 	uint32_t calc_size = (uint32_t)(request->content_end - request->content_start);
-	printf("[HTTP] File data size: %lu bytes\r\n", calc_size);
+	printf("[HTTP] First packet data size: %lu bytes\r\n", calc_size);
 
 	return HTTP_OK;
 }

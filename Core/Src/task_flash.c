@@ -438,7 +438,9 @@ void Task_Flash_Func()
 	FRESULT FR_Status;
 	UINT RWC, WWC;
 	char RW_Buffer[256];
-
+//	BYTE work[4096];
+//	f_mkfs("0:", FM_FAT, 0, work, sizeof(work));
+//	f_mount(&FatFs, "0:", 1);
 	printf("\r\n=== Mounting FatFS ===\r\n");
 
 	// Монтирование файловой системы
@@ -552,23 +554,6 @@ void Task_Flash_Func()
 		} else {
 			sprintf(TxBuffer, "Error! Failed to create directory, Error Code: (%i)\r\n", FR_Status);
 			printf("%s", TxBuffer);
-		}
-
-		// Пример записи сжатого HTML файла в директорию web
-		// (ваш массив index_html уже есть в коде)
-		char index_html[] = {
-			0x1f, 0x8b, 0x08, 0x08, 0xb1, 0xd4, 0xa5, 0x68, 0x04, 0x00, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x2e,
-			0x68, 0x74, 0x6d, 0x6c, 0x00, 0x5d, 0x51, 0x4d, 0x4f, 0xc3, 0x30, 0x0c, 0xbd, 0x23, 0xf1, 0x1f,
-			// ... остальные данные
-		};
-
-		FR_Status = f_open(&Fil, "web/index.html.gz", FA_CREATE_ALWAYS | FA_WRITE);
-		if (FR_Status == FR_OK) {
-			FR_Status = f_write(&Fil, index_html, sizeof(index_html), &WWC);
-			f_close(&Fil);
-			if (FR_Status == FR_OK) {
-				printf("Web file 'index.html.gz' created: %d bytes\r\n", WWC);
-			}
 		}
 
 		// Создание директории для веб-файлов

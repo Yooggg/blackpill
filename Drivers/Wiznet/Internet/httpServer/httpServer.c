@@ -20,16 +20,15 @@
 /*****************************************************************************
  * Private types/enumerations/variables
  ****************************************************************************/
-static uint8_t HTTPSock_Num[_WIZCHIP_SOCK_NUM_] = {0, };
+uint8_t HTTPSock_Num[_WIZCHIP_SOCK_NUM_] = {0, };
 static st_http_request * http_request;				/**< Pointer to received HTTP request */
 static st_http_request * parsed_http_request;		/**< Pointer to parsed HTTP request */
 static uint8_t * http_response;						/**< Pointer to HTTP response */
 static uint8_t current_file_is_gzip = 0;
-// ## For Debugging
-//static uint8_t uri_buf[128];
 
 // Number of registered web content in code flash memory
 static uint16_t total_content_cnt = 0;
+
 /*****************************************************************************
  * Public types/enumerations/variables
  ****************************************************************************/
@@ -176,6 +175,15 @@ void httpServer_run(uint8_t seqnum)
 						// HTTP 'response' handler; includes send_http_response_header / body function
 						http_process_handler(s, parsed_http_request);
 
+						// === КРИТИЧНО: НЕ ПЕРЕЗАПИСЫВАЕМ STATE_HTTP_UPLOAD! ===
+						if(HTTPSock_Status[seqnum].sock_status == STATE_HTTP_UPLOAD) {
+							// Потоковая загрузка началась - НЕ ТРОГАЕМ состояние!
+#ifdef _HTTPSERVER_DEBUG_
+							printf("> HTTPSocket[%d] : [State] Streaming upload started, keeping STATE_HTTP_UPLOAD\r\n", s);
+#endif
+							break;  // Остаемся в STATE_HTTP_IDLE, но sock_status = STATE_HTTP_UPLOAD
+						}
+
 						gettime = get_httpServer_timecount();
 						// Check the TX socket buffer for End of HTTP response sends
 						while(getSn_TX_FSR(s) != (getSn_TxMAX(s)))
@@ -205,6 +213,126 @@ void httpServer_run(uint8_t seqnum)
 					if(HTTPSock_Status[seqnum].file_len == 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
 					break;
 
+				case STATE_HTTP_UPLOAD:
+#ifdef _USE_SDCARD_
+				{
+					// === ПОТОКОВАЯ ЗАГРУЗКА ФАЙЛА ===
+
+					// Проверяем есть ли данные в сокете
+					if ((len = getSn_RX_RSR(s)) > 0)
+					{
+						// Ограничиваем размер чтения буфером
+						if (len > DATA_BUF_SIZE - 1) len = DATA_BUF_SIZE - 1;
+
+						// Читаем данные из сокета
+						len = recv(s, (uint8_t *)http_request, len);
+
+						if (len > 0) {
+#ifdef _HTTPSERVER_DEBUG_
+							printf("> HTTPSocket[%d] : [Upload] Received %d bytes\r\n", s, len);
+#endif
+
+							// Вычисляем сколько данных нужно записать в файл
+							uint32_t bytes_to_write = len;
+							uint32_t total_received_after = HTTPSock_Status[seqnum].upload_bytes_received + len;
+
+							// Проверяем - не превысили ли размер файла
+							if (total_received_after >= HTTPSock_Status[seqnum].upload_content_length) {
+								// Это последний пакет - нужно обрезать boundary
+								uint32_t remaining = HTTPSock_Status[seqnum].upload_content_length -
+													HTTPSock_Status[seqnum].upload_bytes_received;
+
+								if (remaining < len) {
+									bytes_to_write = remaining;
+#ifdef _HTTPSERVER_DEBUG_
+									printf("> HTTPSocket[%d] : [Upload] Last packet, writing only %lu bytes\r\n",
+										   s, bytes_to_write);
+#endif
+								}
+							}
+
+							// Записываем данные в файл
+							if (bytes_to_write > 0) {
+								UINT bytes_written = 0;
+								FRESULT res = f_write(&HTTPSock_Status[seqnum].upload_file,
+													 http_request,
+													 bytes_to_write,
+													 &bytes_written);
+
+								if (res != FR_OK) {
+#ifdef _HTTPSERVER_DEBUG_
+									printf("> HTTPSocket[%d] : [Upload] ERROR: f_write failed, code %d\r\n", s, res);
+#endif
+									// Закрываем файл при ошибке
+									f_close(&HTTPSock_Status[seqnum].upload_file);
+									HTTPSock_Status[seqnum].upload_active = 0;
+
+									// Отправляем ошибку
+									const char* error_response = "HTTP/1.1 500 Internal Server Error\r\n"
+																 "Content-Type: text/plain\r\n"
+																 "Content-Length: 12\r\n"
+																 "\r\n"
+																 "WRITE_FAILED";
+									send(s, (uint8_t*)error_response, strlen(error_response));
+
+									HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
+									break;
+								}
+
+								HTTPSock_Status[seqnum].upload_bytes_written += bytes_written;
+								HTTPSock_Status[seqnum].upload_bytes_received += bytes_to_write;
+
+#ifdef _HTTPSERVER_DEBUG_
+								printf("> HTTPSocket[%d] : [Upload] Written %u bytes (total: %lu / %lu)\r\n",
+									   s, bytes_written,
+									   HTTPSock_Status[seqnum].upload_bytes_received,
+									   HTTPSock_Status[seqnum].upload_content_length);
+#endif
+							}
+
+							// Проверяем - все ли данные получены
+							if (HTTPSock_Status[seqnum].upload_bytes_received >=
+								HTTPSock_Status[seqnum].upload_content_length)
+							{
+								// Закрываем файл
+								f_close(&HTTPSock_Status[seqnum].upload_file);
+								HTTPSock_Status[seqnum].upload_active = 0;
+
+#ifdef _HTTPSERVER_DEBUG_
+								printf("> HTTPSocket[%d] : [Upload] COMPLETE! Total written: %lu bytes\r\n",
+									   s, HTTPSock_Status[seqnum].upload_bytes_written);
+#endif
+
+								// Отправляем успешный ответ
+								const char* success_response = "HTTP/1.1 200 OK\r\n"
+															  "Content-Type: text/plain\r\n"
+															  "Content-Length: 2\r\n"
+															  "\r\n"
+															  "OK";
+								send(s, (uint8_t*)success_response, strlen(success_response));
+
+								// === КРИТИЧНО: Дождаться отправки данных перед закрытием ===
+								gettime = get_httpServer_timecount();
+								while(getSn_TX_FSR(s) != getSn_TxMAX(s))
+								{
+									if((get_httpServer_timecount() - gettime) > 3)
+									{
+#ifdef _HTTPSERVER_DEBUG_
+										printf("> HTTPSocket[%d] : [Upload] TX Buffer clear timeout\r\n", s);
+#endif
+										break;
+									}
+								}
+
+								// Переходим в состояние завершения
+								HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
+							}
+						}
+					}
+				}
+#endif
+				break;
+
 				case STATE_HTTP_RES_DONE :
 #ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : [State] STATE_HTTP_RES_DONE\r\n", s);
@@ -215,9 +343,14 @@ void httpServer_run(uint8_t seqnum)
 					HTTPSock_Status[seqnum].file_start = 0;
 					HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
 
-//#ifdef _USE_SDCARD_
-//					f_close(&fs);
-//#endif
+					// === ДОБАВЬ ЭТО: Очистка состояния загрузки ===
+#ifdef _USE_SDCARD_
+					HTTPSock_Status[seqnum].upload_active = 0;
+					HTTPSock_Status[seqnum].upload_bytes_received = 0;
+					HTTPSock_Status[seqnum].upload_bytes_written = 0;
+					HTTPSock_Status[seqnum].upload_content_length = 0;
+#endif
+
 #ifdef _USE_WATCHDOG_
 					HTTPServer_WDT_Reset();
 #endif
@@ -270,25 +403,24 @@ void httpServer_run(uint8_t seqnum)
 ////////////////////////////////////////////
 static void send_http_response_header(uint8_t s, uint8_t content_type, uint32_t body_len, uint16_t http_status)
 {
-	uint8_t head_buf[300] = {0,};  // Увеличили размер буфера
+	uint8_t head_buf[300] = {0,};
 	uint16_t len;
-	char tmp[10];
 
 	switch(http_status)
 	{
 		case STATUS_OK:
-			// Если это gzip файл - добавляем Content-Encoding
+			// If GZIP file - add Content-Encoding header
 			if(current_file_is_gzip) {
 				char * mime_type = "";
 
-				// Определяем MIME type
+				// Determine MIME type
 				if(content_type == PTYPE_JS) mime_type = "application/javascript";
 				else if(content_type == PTYPE_CSS) mime_type = "text/css";
 				else if(content_type == PTYPE_HTML) mime_type = "text/html";
 				else if(content_type == PTYPE_JSON) mime_type = "application/json";
 				else mime_type = "application/octet-stream";
 
-				// Формируем заголовок с gzip
+				// Format GZIP header
 				sprintf((char*)head_buf,
 					"HTTP/1.1 200 OK\r\n"
 					"Content-Type: %s\r\n"
@@ -300,7 +432,7 @@ static void send_http_response_header(uint8_t s, uint8_t content_type, uint32_t 
 				printf("[HTTP] Sending GZIP response header (type: %s, len: %ld)\r\n", mime_type, body_len);
 			}
 			else {
-				// Обычный заголовок без gzip
+				// Normal header without gzip
 				make_http_response_head((char*)head_buf, content_type, body_len);
 			}
 			break;
@@ -385,7 +517,6 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		if(send_len > DATA_BUF_SIZE - 1)
 		{
 			send_len = DATA_BUF_SIZE - 1;
-			//HTTPSock_Status[get_seqnum]->file_offset += send_len;
 		}
 		else
 		{
@@ -468,7 +599,9 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 
 // ## 20141219 Eric added, for 'File object structure' (fs) allocation reduced (8 -> 1)
 #ifdef _USE_SDCARD_
-	f_close(&fs);
+	if(flag_datasend_end) {
+			f_close(&fs);
+		}
 #endif
 // ## 20141219 added end
 }
@@ -531,14 +664,21 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			get_http_uri_name(p_http_request->URI, uri_buf);
 			uri_name = uri_buf;
 
-			if (!strcmp((char *)uri_name, "/"))
-			    strcpy((char *)uri_name, INITIAL_WEBPAGE);
-			else if (uri_name[strlen((char *)uri_name) - 1] == '/')
-			    strcat((char *)uri_name, "index.html");
-			else if (!strcmp((char *)uri_name, "m"))
-			    strcpy((char *)uri_name, M_INITIAL_WEBPAGE);
-			else if (!strcmp((char *)uri_name, "mobile"))
-			    strcpy((char *)uri_name, MOBILE_INITIAL_WEBPAGE);
+			// Handle root path "/"
+			if (!strcmp((char *)uri_name, "/")) {
+				strcpy((char *)uri_name, INITIAL_WEBPAGE);
+			}
+			// Handle directory paths ending with "/"
+			else if (strlen((char *)uri_name) > 0 && uri_name[strlen((char *)uri_name) - 1] == '/') {
+				strcat((char *)uri_name, "index.html");
+			}
+			// Legacy mobile paths
+			else if (!strcmp((char *)uri_name, "m")) {
+				strcpy((char *)uri_name, M_INITIAL_WEBPAGE);
+			}
+			else if (!strcmp((char *)uri_name, "mobile")) {
+				strcpy((char *)uri_name, MOBILE_INITIAL_WEBPAGE);
+			}
 			find_http_uri_type(&p_http_request->TYPE, uri_name);	// Checking requested file types (HTML, TEXT, GIF, JPEG and Etc. are included)
 
 #ifdef _HTTPSERVER_DEBUG_
@@ -561,7 +701,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			}
 			else
 			{
-				// Сбрасываем флаг gzip
+				// Reset GZIP flag
 				current_file_is_gzip = 0;
 
 				// Find the User registered index for web content
@@ -575,62 +715,74 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			#ifdef _USE_SDCARD_
 				else
 				{
-					// ========== ПОДДЕРЖКА GZIP: НАЧАЛО ==========
+					// ========== GZIP SUPPORT: START ==========
 
-					// Проверяем - это JS или CSS файл?
+					// FatFS requires paths to start with '/'
+					// Create FatFS path with leading '/'
+					char fatfs_path[MAX_URI_SIZE + 1];
+					if (uri_name[0] != '/') {
+						fatfs_path[0] = '/';
+						strcpy(fatfs_path + 1, (char *)uri_name);
+					} else {
+						strcpy(fatfs_path, (char *)uri_name);
+					}
+
+					// Check if this is JS/CSS/HTML/JSON file
 					uint8_t try_gzip = 0;
-					if(strstr((char*)uri_name, ".js") || strstr((char*)uri_name, ".css") ||
-					   strstr((char*)uri_name, ".html") || strstr((char*)uri_name, ".json")) {
+					if(strstr(fatfs_path, ".js") || strstr(fatfs_path, ".css") ||
+					   strstr(fatfs_path, ".html") || strstr(fatfs_path, ".json")) {
 						try_gzip = 1;
 					}
 
-					// Если это JS/CSS - сначала пробуем .gz версию
+					// If JS/CSS - try GZIP version first
 					if(try_gzip) {
-						char gz_filename[MAX_URI_SIZE + 4];  // +4 для ".gz"
-						sprintf(gz_filename, "%s.gz", uri_name);
+						char gz_filename[MAX_URI_SIZE + 4];  // +4 for ".gz"
+						sprintf(gz_filename, "%s.gz", fatfs_path);
 
 						printf("[HTTP] Trying GZIP version: %s\r\n", gz_filename);
 
 						if((fr = f_open(&fs, gz_filename, FA_READ)) == FR_OK)
 						{
-							// GZIP версия найдена!
+							// GZIP version found!
 							content_found = 1;
 							current_file_is_gzip = 1;
-							file_len = fs.fsize;
-							content_addr = fs.sclust;
+							file_len = f_size(&fs);  // Use FatFS API for file size
+							content_addr = 0;  // Not needed for FatFS - file handle is used
 							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
-							printf("[HTTP] ✓ Found GZIP file: %s (%ld bytes)\r\n", gz_filename, file_len);
+							printf("[HTTP] Found GZIP file: %s (%ld bytes)\r\n", gz_filename, file_len);
 						}
 						else {
-							// GZIP версии нет, пробуем обычный файл
-							printf("[HTTP] No GZIP version, trying normal file: %s\r\n", uri_name);
+							// No GZIP version, try normal file
+							printf("[HTTP] No GZIP version, trying normal file: %s\r\n", fatfs_path);
 
-							if((fr = f_open(&fs, (const char *)uri_name, FA_READ)) == FR_OK)
+							if((fr = f_open(&fs, fatfs_path, FA_READ)) == FR_OK)
 							{
 								content_found = 1;
 								current_file_is_gzip = 0;
-								file_len = fs.fsize;
-								content_addr = fs.sclust;
+								file_len = f_size(&fs);  // Use FatFS API for file size
+								content_addr = 0;  // Not needed for FatFS - file handle is used
 								HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
-								printf("[HTTP] ✓ Found normal file: %s (%ld bytes)\r\n", uri_name, file_len);
+								printf("[HTTP] Found normal file: %s (%ld bytes)\r\n", fatfs_path, file_len);
 							}
 						}
 					}
 					else {
-						// Для остальных файлов (картинки, шрифты) - обычная загрузка
-						if((fr = f_open(&fs, (const char *)uri_name, FA_READ)) == FR_OK)
+						// For other files (images, fonts) - normal loading
+						if((fr = f_open(&fs, fatfs_path, FA_READ)) == FR_OK)
 						{
 							content_found = 1;
 							current_file_is_gzip = 0;
-							file_len = fs.fsize;
-							content_addr = fs.sclust;
+							file_len = f_size(&fs);  // Use FatFS API for file size
+							content_addr = 0;  // Not needed for FatFS - file handle is used
 							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
+
+							printf("[HTTP] Loaded normal file: %s (%ld bytes)\r\n", fatfs_path, file_len);
 						}
 					}
 
-					// ========== ПОДДЕРЖКА GZIP: КОНЕЦ ==========
+					// ========== GZIP SUPPORT: END ==========
 				}
 			#elif _USE_FLASH_
 				else if(/* Read content from Dataflash */)
@@ -647,7 +799,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					printf("> HTTPSocket[%d] : Unknown Page Request\r\n", s);
 			#endif
 					http_status = STATUS_NOT_FOUND;
-					current_file_is_gzip = 0;  // Сбрасываем флаг при ошибке
+					current_file_is_gzip = 0;  // Reset flag on error
 				}
 				else
 				{
@@ -688,10 +840,20 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 
 			if(p_http_request->TYPE == PTYPE_CGI)	// HTTP POST Method; CGI Process
 			{
-				content_found = http_post_cgi_handler(uri_name, p_http_request, http_response, &file_len);
+				content_found = http_post_cgi_handler(s, uri_name, p_http_request, http_response, &file_len);
 #ifdef _HTTPSERVER_DEBUG_
 				printf("> HTTPSocket[%d] : [CGI: %s] / Response len [ %ld ]byte\r\n", s, content_found?"Content found":"Content not found", file_len);
 #endif
+
+				// === КРИТИЧНО: НЕ отправляем ответ для потоковой загрузки! ===
+				if(HTTPSock_Status[get_seqnum].sock_status == STATE_HTTP_UPLOAD) {
+#ifdef _HTTPSERVER_DEBUG_
+					printf("> HTTPSocket[%d] : [POST] Streaming upload - response will be sent after completion\r\n", s);
+#endif
+					// Ответ отправится в STATE_HTTP_UPLOAD когда загрузка завершится
+					break;
+				}
+
 				if(content_found && (file_len <= (DATA_BUF_SIZE-(strlen(RES_CGIHEAD_OK)+8))))
 				{
 					send_http_response_cgi(s, pHTTP_TX, http_response, (uint16_t)file_len);
