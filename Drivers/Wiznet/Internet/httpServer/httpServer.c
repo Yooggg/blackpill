@@ -24,7 +24,7 @@ static uint8_t HTTPSock_Num[_WIZCHIP_SOCK_NUM_] = {0, };
 static st_http_request * http_request;				/**< Pointer to received HTTP request */
 static st_http_request * parsed_http_request;		/**< Pointer to parsed HTTP request */
 static uint8_t * http_response;						/**< Pointer to HTTP response */
-
+static uint8_t current_file_is_gzip = 0;
 // ## For Debugging
 //static uint8_t uri_buf[128];
 
@@ -154,9 +154,18 @@ void httpServer_run(uint8_t seqnum)
 						*(((uint8_t *)http_request) + len) = '\0';
 
 						parse_http_request(parsed_http_request, (uint8_t *)http_request);
-#ifdef _HTTPSERVER_DEBUG_
-						getSn_DIPR(s, destip);
-						destport = getSn_DPORT(s);
+
+
+						if(strlen((char*)parsed_http_request->URI) == 1 &&
+						   parsed_http_request->URI[0] == '/') {
+							strcpy((char*)parsed_http_request->URI, "/index.html");
+							printf("[HTTP] Root requested, serving index.html\r\n");
+						}
+
+
+						#ifdef _HTTPSERVER_DEBUG_
+							getSn_DIPR(s, destip);
+							destport = getSn_DPORT(s);
 						printf("\r\n");
 						printf("> HTTPSocket[%d] : HTTP Request received ", s);
 						printf("from %d.%d.%d.%d : %d\r\n", destip[0], destip[1], destip[2], destip[3], destport);
@@ -261,49 +270,55 @@ void httpServer_run(uint8_t seqnum)
 ////////////////////////////////////////////
 static void send_http_response_header(uint8_t s, uint8_t content_type, uint32_t body_len, uint16_t http_status)
 {
+	uint8_t head_buf[300] = {0,};  // Увеличили размер буфера
+	uint16_t len;
+	char tmp[10];
+
 	switch(http_status)
 	{
-		case STATUS_OK: 		// HTTP/1.1 200 OK
-			if((content_type != PTYPE_CGI) && (content_type != PTYPE_XML)) // CGI/XML type request does not respond HTTP header
-			{
-#ifdef _HTTPSERVER_DEBUG_
-			printf("> HTTPSocket[%d] : HTTP Response Header - STATUS_OK\r\n", s);
-#endif
-				make_http_response_head((char*)http_response, content_type, body_len);
+		case STATUS_OK:
+			// Если это gzip файл - добавляем Content-Encoding
+			if(current_file_is_gzip) {
+				char * mime_type = "";
+
+				// Определяем MIME type
+				if(content_type == PTYPE_JS) mime_type = "application/javascript";
+				else if(content_type == PTYPE_CSS) mime_type = "text/css";
+				else if(content_type == PTYPE_HTML) mime_type = "text/html";
+				else if(content_type == PTYPE_JSON) mime_type = "application/json";
+				else mime_type = "application/octet-stream";
+
+				// Формируем заголовок с gzip
+				sprintf((char*)head_buf,
+					"HTTP/1.1 200 OK\r\n"
+					"Content-Type: %s\r\n"
+					"Content-Encoding: gzip\r\n"
+					"Content-Length: %ld\r\n"
+					"\r\n",
+					mime_type, body_len);
+
+				printf("[HTTP] Sending GZIP response header (type: %s, len: %ld)\r\n", mime_type, body_len);
 			}
-			else
-			{
-#ifdef _HTTPSERVER_DEBUG_
-			printf("> HTTPSocket[%d] : HTTP Response Header - NONE / CGI or XML\r\n", s);
-#endif
-				// CGI/XML type request does not respond HTTP header to client
-				http_status = 0;
+			else {
+				// Обычный заголовок без gzip
+				make_http_response_head((char*)head_buf, content_type, body_len);
 			}
 			break;
-		case STATUS_BAD_REQ: 	// HTTP/1.1 400 OK
-#ifdef _HTTPSERVER_DEBUG_
-			printf("> HTTPSocket[%d] : HTTP Response Header - STATUS_BAD_REQ\r\n", s);
-#endif
-			memcpy(http_response, ERROR_REQUEST_PAGE, sizeof(ERROR_REQUEST_PAGE));
+
+		case STATUS_NOT_FOUND:
+			memcpy(head_buf, ERROR_HTML_PAGE, sizeof(ERROR_HTML_PAGE));
 			break;
-		case STATUS_NOT_FOUND:	// HTTP/1.1 404 Not Found
-#ifdef _HTTPSERVER_DEBUG_
-			printf("> HTTPSocket[%d] : HTTP Response Header - STATUS_NOT_FOUND\r\n", s);
-#endif
-			memcpy(http_response, ERROR_HTML_PAGE, sizeof(ERROR_HTML_PAGE));
-			break;
+
 		default:
 			break;
 	}
 
-	// Send the HTTP Response 'header'
-	if(http_status)
-	{
+	len = strlen((char*)head_buf);
+	send(s, head_buf, len);
+
 #ifdef _HTTPSERVER_DEBUG_
-		printf("> HTTPSocket[%d] : [Send] HTTP Response Header [ %d ]byte\r\n", s, (uint16_t)strlen((char *)http_response));
+	printf("> HTTPSocket[%d] : Send response header (%d bytes)\r\n", s, len);
 #endif
-		send(s, http_response, strlen((char *)http_response));
-	}
 }
 
 static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf, uint32_t start_addr, uint32_t file_len)
@@ -516,9 +531,14 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			get_http_uri_name(p_http_request->URI, uri_buf);
 			uri_name = uri_buf;
 
-			if (!strcmp((char *)uri_name, "/")) strcpy((char *)uri_name, INITIAL_WEBPAGE);	// If URI is "/", respond by index.html
-			if (!strcmp((char *)uri_name, "m")) strcpy((char *)uri_name, M_INITIAL_WEBPAGE);
-			if (!strcmp((char *)uri_name, "mobile")) strcpy((char *)uri_name, MOBILE_INITIAL_WEBPAGE);
+			if (!strcmp((char *)uri_name, "/"))
+			    strcpy((char *)uri_name, INITIAL_WEBPAGE);
+			else if (uri_name[strlen((char *)uri_name) - 1] == '/')
+			    strcat((char *)uri_name, "index.html");
+			else if (!strcmp((char *)uri_name, "m"))
+			    strcpy((char *)uri_name, M_INITIAL_WEBPAGE);
+			else if (!strcmp((char *)uri_name, "mobile"))
+			    strcpy((char *)uri_name, MOBILE_INITIAL_WEBPAGE);
 			find_http_uri_type(&p_http_request->TYPE, uri_name);	// Checking requested file types (HTML, TEXT, GIF, JPEG and Etc. are included)
 
 #ifdef _HTTPSERVER_DEBUG_
@@ -541,60 +561,109 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			}
 			else
 			{
+				// Сбрасываем флаг gzip
+				current_file_is_gzip = 0;
+
 				// Find the User registered index for web content
 				if(find_userReg_webContent(uri_buf, &content_num, &file_len))
 				{
-					content_found = 1; // Web content found in code flash memory
+					content_found = 1;
 					content_addr = (uint32_t)content_num;
 					HTTPSock_Status[get_seqnum].storage_type = CODEFLASH;
 				}
 				// Not CGI request, Web content in 'SD card' or 'Data flash' requested
-#ifdef _USE_SDCARD_
-#ifdef _HTTPSERVER_DEBUG_
-				printf("\r\n> HTTPSocket[%d] : Searching the requested content\r\n", s);
-#endif
-				if((fr = f_open(&fs, (const char *)uri_name, FA_READ)) == 0)
+			#ifdef _USE_SDCARD_
+				else
 				{
-					content_found = 1; // file open succeed
+					// ========== ПОДДЕРЖКА GZIP: НАЧАЛО ==========
 
-					file_len = fs.fsize;
-					content_addr = fs.sclust;
-					HTTPSock_Status[get_seqnum].storage_type = SDCARD;
+					// Проверяем - это JS или CSS файл?
+					uint8_t try_gzip = 0;
+					if(strstr((char*)uri_name, ".js") || strstr((char*)uri_name, ".css") ||
+					   strstr((char*)uri_name, ".html") || strstr((char*)uri_name, ".json")) {
+						try_gzip = 1;
+					}
+
+					// Если это JS/CSS - сначала пробуем .gz версию
+					if(try_gzip) {
+						char gz_filename[MAX_URI_SIZE + 4];  // +4 для ".gz"
+						sprintf(gz_filename, "%s.gz", uri_name);
+
+						printf("[HTTP] Trying GZIP version: %s\r\n", gz_filename);
+
+						if((fr = f_open(&fs, gz_filename, FA_READ)) == FR_OK)
+						{
+							// GZIP версия найдена!
+							content_found = 1;
+							current_file_is_gzip = 1;
+							file_len = fs.fsize;
+							content_addr = fs.sclust;
+							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
+
+							printf("[HTTP] ✓ Found GZIP file: %s (%ld bytes)\r\n", gz_filename, file_len);
+						}
+						else {
+							// GZIP версии нет, пробуем обычный файл
+							printf("[HTTP] No GZIP version, trying normal file: %s\r\n", uri_name);
+
+							if((fr = f_open(&fs, (const char *)uri_name, FA_READ)) == FR_OK)
+							{
+								content_found = 1;
+								current_file_is_gzip = 0;
+								file_len = fs.fsize;
+								content_addr = fs.sclust;
+								HTTPSock_Status[get_seqnum].storage_type = SDCARD;
+
+								printf("[HTTP] ✓ Found normal file: %s (%ld bytes)\r\n", uri_name, file_len);
+							}
+						}
+					}
+					else {
+						// Для остальных файлов (картинки, шрифты) - обычная загрузка
+						if((fr = f_open(&fs, (const char *)uri_name, FA_READ)) == FR_OK)
+						{
+							content_found = 1;
+							current_file_is_gzip = 0;
+							file_len = fs.fsize;
+							content_addr = fs.sclust;
+							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
+						}
+					}
+
+					// ========== ПОДДЕРЖКА GZIP: КОНЕЦ ==========
 				}
-#elif _USE_FLASH_
+			#elif _USE_FLASH_
 				else if(/* Read content from Dataflash */)
 				{
 					content_found = 1;
-					HTTPSock_Status[get_seqnum]->storage_type = DATAFLASH;
+					HTTPSock_Status[get_seqnum].storage_type = DATAFLASH;
 					; // To do
 				}
-#endif
-				else
-				{
-					content_found = 0; // fail to find content
-				}
+			#endif
 
 				if(!content_found)
 				{
-#ifdef _HTTPSERVER_DEBUG_
+			#ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : Unknown Page Request\r\n", s);
-#endif
+			#endif
 					http_status = STATUS_NOT_FOUND;
+					current_file_is_gzip = 0;  // Сбрасываем флаг при ошибке
 				}
 				else
 				{
-#ifdef _HTTPSERVER_DEBUG_
-					printf("> HTTPSocket[%d] : Find Content [%s] ok - Start [%ld] len [ %ld ]byte\r\n", s, uri_name, content_addr, file_len);
-#endif
+			#ifdef _HTTPSERVER_DEBUG_
+					printf("> HTTPSocket[%d] : Find Content [%s] ok - Start [%ld] len [%ld]byte (GZIP: %s)\r\n",
+						s, uri_name, content_addr, file_len, current_file_is_gzip ? "YES" : "NO");
+			#endif
 					http_status = STATUS_OK;
 				}
 
 				// Send HTTP header
 				if(http_status)
 				{
-#ifdef _HTTPSERVER_DEBUG_
-					printf("> HTTPSocket[%d] : Requested content len = [ %ld ]byte\r\n", s, file_len);
-#endif
+			#ifdef _HTTPSERVER_DEBUG_
+					printf("> HTTPSocket[%d] : Requested content len = [%ld]byte\r\n", s, file_len);
+			#endif
 					send_http_response_header(s, p_http_request->TYPE, file_len, http_status);
 				}
 

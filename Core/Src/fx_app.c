@@ -16,7 +16,7 @@ void fx_app_init(void)
 
 	//Task_Main_Init();
 	Task_Flash_Init();
-//	Task_Web_Init();
+	Task_Web_Init();
 
 
 

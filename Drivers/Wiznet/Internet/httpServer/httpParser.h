@@ -44,6 +44,8 @@ extern "C" {
 #define		PTYPE_WOFF		22		/**< Font type: WOFF file. */
 #define		PTYPE_EOT		23		/**< Font type: EOT file. */
 #define		PTYPE_SVG		24		/**< Font type: SVG file. */
+#define		PTYPE_WOFF2		25		/**< Font type: WOFF2 file. */
+#define		PTYPE_MAP		26		/**< Source map file. */
 
 
 /* HTTP response */
@@ -120,6 +122,12 @@ static const char 	ERROR_REQUEST_PAGE[] = "HTTP/1.1 400 OK\r\nContent-Type: text
 
 /* Response head for SVG, Font */
 #define RES_SVGHEAD_OK	"HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nContent-Length: "
+
+/* Response head for WOFF2, Font */
+#define RES_WOFF2HEAD_OK "HTTP/1.1 200 OK\r\nContent-Type: font/woff2\r\nContent-Length: "
+
+/* Response head for MAP */
+#define RES_MAPHEAD_OK   "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
 
 /**
  @brief 	Structure of HTTP REQUEST 

@@ -28,8 +28,8 @@ extern SPI_HandleTypeDef hspi2;
 //
 uint8_t http_server_socket_list[] = {2, 3, 4, 5};
 //
-uint8_t http_server_tx_buf[1024];
-uint8_t http_server_rx_buf[1024];
+uint8_t http_server_tx_buf[4096];
+uint8_t http_server_rx_buf[4096];
 //
 uint8_t http_upload_page[] = "<!DOCTYPE html>\
 <html lang=\"en\">\
@@ -100,129 +100,176 @@ uint8_t http_upload_page[] = "<!DOCTYPE html>\
 //</body>\
 //</html>";
 
-const char* http_explorer_page =  "<!DOCTYPE html>\
-		<html lang=\"en\">\
-		<head>\
-		    <meta charset=\"UTF-8\">\
-		    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\
-		    <title>Index of /</title>\
-		    <style>\
-		        body { font-family: Arial, sans-serif; }\
-		        h1 { font-size: 20px; }\
-		        a { text-decoration: none; color: blue; }\
-		        a:hover { text-decoration: underline; }\
-		        #file-list { margin-top: 10px; }\
-				#controls {\
-					margin: 10px 0; display: flex; gap: 10px;\
-				}\
-				.button {\
-				  display: inline-block;\
-				  padding: 6px 12px;\
-				  background: #4285f4;\
-				  color: white;\
-				  border: none;\
-				  border-radius: 4px;\
-				  font-size: 14px;\
-				  cursor: pointer;\
-				  text-align: center;\
-				}\
-				.button:hover {\
-				  background: #0056b3;\
-				}\
-				input[type=\"file\"] {\
-				  display: none;\
-				}\
-				.folder {\
-				  margin-top: 10px;\
-				}\
-		    </style>\
-		</head>\
-		<body>\
-		    <h1>Index of /</h1>\
-		    <hr>\
-			<div class=\"controls\">\
-				<label class=\"button\">\
-					Upload Files\
-					<input type=\"file\" id=\"fileInput\" multiple />\
-    			</label>\
-    			<button class=\"button\" onclick=\"createFolder()\">Create folder</button>\
-  	  	  	</div>\
-		    <div id=\"file-list\">Loading...</div>\
-		    <hr>\
-		    <script>\
-				function joinPaths(...parts) {\
-				  return parts\
-					.map(part => part.replace(/^\\/+|\\/+$/g, ''))\
-					.filter(Boolean)\
-					.join('/');\
-				}\
-				document.getElementById(\"fileInput\").addEventListener(\"change\", async function () {\
-				  const files = this.files;\
-				  for (let file of files) {\
-					const formData = new FormData();\
-					formData.append(\"file\", file);\
-					await fetch(\"api/upload.cgi\", {\
-					  method: \"POST\",\
-					  body: formData\
-					});\
-				  }\
-				  loadFiles();\
-				});\
-				function createFolder() {\
-				    const folderName = prompt(\"Enter the name of directory:\");\
-				    if (!folderName) return;\
-				    fetch(\"/api/mkdir.cgi?name=\" + encodeURIComponent(folderName))\
-				        .then(res => {\
-							if (res.ok) {\
-								alert(\"Folder created!\");\
-								loadFiles();\
-							} else {\
-								alert(\"Error\");\
-							}\
-				        });\
-				    }\
-		        async function loadFiles(path = \"\") {\
-		            try {\
-						const depth = path === \"\" ? 0 : path.split(\"\").filter(Boolean).length;\
-		                const response = await fetch(`list.cgi?path=${encodeURIComponent(path ? '/' + path : '')}`, {\
-            				headers: {\
-                			\"X-Depth-Level\": depth.toString()\
-            				}\
-        				});\
-		                if (!response.ok) throw new Error(\"Network response was not ok\");\
-		                const data = await response.json();\
-						console.log(data);\
-		                let listDiv = document.getElementById(\"file-list\");\
-		                listDiv.innerHTML = \"\";\
-		                if (path) {\
-            				const parentPath = path.includes(\"/\")\
-                				? path.substring(0, path.lastIndexOf(\"/\"))\
-                				: \"\";\
-            				listDiv.innerHTML += `<div><a href=\"#\" onclick=\"loadFiles('${parentPath}')\">../</a></div>`;\
-        				}\
-						data.folders.forEach(folder => {\
-							const folderPath = joinPaths(path, folder);\
-							listDiv.innerHTML += `\
-								<div>\
-									<a href=\"#\" onclick=\"loadFiles('${folderPath}')\">${folder}/</a>\
-								</div>`;\
-						});\
-						data.files.forEach(file => {\
-							const filePath = joinPaths(path, file);\
-							listDiv.innerHTML += `\
-								<div>\
-									<a href=\"${filePath}\">${file}</a>\
-								</div>`;\
-						});\
-		            } catch (error) {\
-		                document.getElementById(\"file-list\").innerText = \"Error loading files!\";\
-		            }\
-		        }\
-				\
-		        loadFiles();\
-		    </script>\
-		</body>\
-		</html>";
+const char* http_explorer_page =
+"<!DOCTYPE html>"
+"<html lang=\"ru\">"
+"<head>"
+"<meta charset=\"UTF-8\">"
+"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+"<title>File Manager</title>"
+"<style>"
+"body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}"
+".container{max-width:900px;margin:0 auto;background:white;padding:20px;border:1px solid #ccc}"
+"h1{margin:0 0 20px 0;font-size:20px}"
+".toolbar{margin-bottom:15px;padding-bottom:15px;border-bottom:1px solid #ddd}"
+".toolbar button{padding:8px 15px;margin-right:10px;background:#fff;border:1px solid #999;cursor:pointer}"
+".toolbar button:hover{background:#f0f0f0}"
+".breadcrumb{margin-bottom:15px;padding:8px;background:#f9f9f9;border:1px solid #ddd;font-size:14px}"
+"table{width:100%;border-collapse:collapse}"
+"th{background:#f0f0f0;padding:10px;text-align:left;border:1px solid #ccc;font-weight:normal}"
+"td{padding:8px;border:1px solid #ddd}"
+"tr:hover{background:#f9f9f9}"
+".folder{cursor:pointer;color:#0066cc}"
+".folder:hover{text-decoration:underline}"
+".delete-btn{padding:3px 8px;background:#fff;border:1px solid #999;cursor:pointer;font-size:12px}"
+".delete-btn:hover{background:#ffcccc}"
+".modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5)}"
+".modal.active{display:flex;align-items:center;justify-content:center}"
+".modal-content{background:white;padding:20px;border:1px solid #999;min-width:400px}"
+".modal-content h3{margin:0 0 15px 0;font-size:16px}"
+".modal-content input{width:100%;padding:6px;margin-bottom:15px;border:1px solid #999}"
+".modal-content button{padding:6px 15px;margin-right:10px;background:#fff;border:1px solid #999;cursor:pointer}"
+".empty{padding:40px;text-align:center;color:#999}"
+"#upload-area{border:2px dashed #999;padding:30px;text-align:center;margin-bottom:15px;cursor:pointer}"
+"#upload-area:hover{background:#f9f9f9}"
+"#file-input{display:none}"
+"</style>"
+"</head>"
+"<body>"
+"<div class=\"container\">"
+"<h1>File Manager</h1>"
+"<div class=\"toolbar\">"
+"<button onclick=\"goBack()\">← Back</button>"
+"<button onclick=\"showCreateFolderModal()\">New Folder</button>"
+"<button onclick=\"showUploadModal()\">Upload File</button>"
+"<button onclick=\"refreshList()\">Refresh</button>"
+"</div>"
+"<div class=\"breadcrumb\">Path: <span id=\"current-path\">/</span></div>"
+"<table id=\"file-table\">"
+"<thead><tr><th>Name</th><th>Type</th><th width=\"80\">Action</th></tr></thead>"
+"<tbody id=\"file-list\"><tr><td colspan=\"3\" class=\"empty\">Loading...</td></tr></tbody>"
+"</table>"
+"</div>"
+"<div class=\"modal\" id=\"create-folder-modal\">"
+"<div class=\"modal-content\">"
+"<h3>Create New Folder</h3>"
+"<input type=\"text\" id=\"folder-name\" placeholder=\"Folder name\">"
+"<button onclick=\"createFolder()\">Create</button>"
+"<button onclick=\"hideCreateFolderModal()\">Cancel</button>"
+"</div>"
+"</div>"
+"<div class=\"modal\" id=\"upload-modal\">"
+"<div class=\"modal-content\">"
+"<h3>Upload File</h3>"
+"<div id=\"upload-area\" onclick=\"document.getElementById('file-input').click()\">"
+"Click to select file or drag and drop here"
+"</div>"
+"<input type=\"file\" id=\"file-input\" onchange=\"uploadFile()\">"
+"<button onclick=\"hideUploadModal()\">Cancel</button>"
+"</div>"
+"</div>"
+"<script>"
+"let currentPath='/';"
+"async function loadFileList(path){"
+"try{"
+"const response=await fetch(`/list.cgi?path=${encodeURIComponent(path)}`);"
+"const data=await response.json();"
+"const fileList=document.getElementById('file-list');"
+"fileList.innerHTML='';"
+"document.getElementById('current-path').textContent=path;"
+"if(data.folders.length===0&&data.files.length===0){"
+"fileList.innerHTML='<tr><td colspan=\"3\" class=\"empty\">Empty folder</td></tr>';"
+"return;"
+"}"
+"data.folders.forEach(folder=>{"
+"const row=document.createElement('tr');"
+"row.innerHTML=`<td class=\"folder\" onclick=\"navigateTo('${path}${folder}/')\">${folder}</td>"
+"<td>Folder</td>"
+"<td><button class=\"delete-btn\" onclick=\"deleteItem('${path}${folder}',event)\">Delete</button></td>`;"
+"fileList.appendChild(row);"
+"});"
+"data.files.forEach(file=>{"
+"const row=document.createElement('tr');"
+"row.innerHTML=`<td>${file}</td>"
+"<td>File</td>"
+"<td><button class=\"delete-btn\" onclick=\"deleteItem('${path}${file}',event)\">Delete</button></td>`;"
+"fileList.appendChild(row);"
+"});"
+"}catch(error){"
+"document.getElementById('file-list').innerHTML="
+"`<tr><td colspan=\"3\" class=\"empty\">Error: ${error.message}</td></tr>`;"
+"}"
+"}"
+"function navigateTo(path){currentPath=path;loadFileList(path);}"
+"function goBack(){"
+"if(currentPath==='/') return;"
+"const parts=currentPath.split('/').filter(p=>p);"
+"parts.pop();"
+"currentPath='/'+parts.join('/')+(parts.length>0?'/':'');"
+"loadFileList(currentPath);"
+"}"
+"function refreshList(){loadFileList(currentPath);}"
+"function showCreateFolderModal(){"
+"document.getElementById('create-folder-modal').classList.add('active');"
+"document.getElementById('folder-name').value='';"
+"}"
+"function hideCreateFolderModal(){"
+"document.getElementById('create-folder-modal').classList.remove('active');"
+"}"
+"async function createFolder(){"
+"const folderName=document.getElementById('folder-name').value.trim();"
+"if(!folderName){alert('Enter folder name');return;}"
+"const fullPath=currentPath+folderName;"
+"try{"
+"const response=await fetch(`/api/mkdir.cgi?name=${encodeURIComponent(fullPath)}`);"
+"const result=await response.text();"
+"if(result==='OK'||result==='EXISTS'){"
+"hideCreateFolderModal();"
+"refreshList();"
+"}else{alert('Error creating folder');}"
+"}catch(error){alert('Error: '+error.message);}"
+"}"
+"function showUploadModal(){"
+"document.getElementById('upload-modal').classList.add('active');"
+"}"
+"function hideUploadModal(){"
+"document.getElementById('upload-modal').classList.remove('active');"
+"}"
+"async function uploadFile(){"
+"const fileInput=document.getElementById('file-input');"
+"const file=fileInput.files[0];"
+"if(!file) return;"
+"const formData=new FormData();"
+"formData.append('file',file);"
+"try{"
+"const response=await fetch(`/api/upload.cgi?path=${encodeURIComponent(currentPath)}`,{method:'POST',body:formData});"
+"const result=await response.text();"
+"if(result==='OK'){hideUploadModal();refreshList();}else{alert('Upload error');}"
+"}catch(error){alert('Error: '+error.message);}"
+"}"
+"async function deleteItem(path,event){"
+"event.stopPropagation();"
+"if(!confirm(`Delete ${path}?`)) return;"
+"try{"
+"const response=await fetch(`/api/delete.cgi?path=${encodeURIComponent(path)}`);"
+"const result=await response.text();"
+"if(result==='OK'){refreshList();}else{alert('Delete error');}"
+"}catch(error){alert('Error: '+error.message);}"
+"}"
+"const uploadArea=document.getElementById('upload-area');"
+"uploadArea.addEventListener('dragover',(e)=>{e.preventDefault();});"
+"uploadArea.addEventListener('drop',(e)=>{"
+"e.preventDefault();"
+"const files=e.dataTransfer.files;"
+"if(files.length>0){"
+"document.getElementById('file-input').files=files;"
+"uploadFile();"
+"}"
+"});"
+"window.onload=()=>{loadFileList(currentPath);};"
+"</script>"
+"</body>"
+"</html>";
 
 
 

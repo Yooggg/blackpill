@@ -69,8 +69,10 @@ void make_http_response_head(
 	else if (type == PTYPE_TTF)		head = RES_TTFHEAD_OK;
 	else if (type == PTYPE_OTF)		head = RES_OTFHEAD_OK;
 	else if (type == PTYPE_WOFF)	head = RES_WOFFHEAD_OK;
+	else if (type == PTYPE_WOFF2)	head = RES_WOFF2HEAD_OK;   // <-- ДОБАВЛЕНО!
 	else if (type == PTYPE_EOT)		head = RES_EOTHEAD_OK;
 	else if (type == PTYPE_SVG)		head = RES_SVGHEAD_OK;
+	else if (type == PTYPE_MAP)		head = RES_MAPHEAD_OK;     // <-- ДОБАВЛЕНО!
 #ifdef _HTTPPARSER_DEBUG_
 	else
 	{
@@ -90,11 +92,11 @@ void make_http_response_head(
 
 /**
  @brief	find MIME type of a file
- */ 
+ */
 void find_http_uri_type(
 	uint8_t * type, 	/**< type to be returned */
 	uint8_t * buff		/**< file name */
-	) 
+	)
 {
 	/* Decide type according to extension*/
 
@@ -117,15 +119,17 @@ void find_http_uri_type(
 	else if (strstr(buf, ".ttf") 	|| strstr(buf,".TTF"))	*type = PTYPE_TTF;
 	else if (strstr(buf, ".otf") 	|| strstr(buf,".OTF"))	*type = PTYPE_OTF;
 	else if (strstr(buf, ".woff") 	|| strstr(buf,".WOFF"))	*type = PTYPE_WOFF;
+	else if (strstr(buf, ".woff2")	|| strstr(buf,".WOFF2"))*type = PTYPE_WOFF2;  // <-- ДОБАВЛЕНО!
 	else if (strstr(buf, ".eot") 	|| strstr(buf,".EOT"))	*type = PTYPE_EOT;
 	else if (strstr(buf, ".svg") 	|| strstr(buf,".SVG"))	*type = PTYPE_SVG;
+	else if (strstr(buf, ".map") 	|| strstr(buf,".MAP"))	*type = PTYPE_MAP;     // <-- ДОБАВЛЕНО!
 	else 													*type = PTYPE_ERR;
 }
 
 
 /**
  @brief	parse http request from a peer
- */ 
+ */
 void parse_http_request(
 	st_http_request * request, 	/**< request to be returned */
 	uint8_t * buf				/**< pointer to be parsed */
@@ -173,16 +177,16 @@ void parse_http_request(
  @brief	get next parameter value in the request
  */
 uint8_t * get_http_param_value(
-	char* uri, 
+	char* uri,
 	char* param_name
 	)
 {
 	char tempURI[MAX_URI_SIZE];
 	uint8_t * name = 0;
-	
+
 
 	if(!uri || !param_name) return 0;
-	
+
 	strcpy((char*)tempURI,uri);
 	if((name = (uint8_t*)strstr(tempURI, param_name)))
 	{
@@ -195,7 +199,7 @@ uint8_t * get_http_param_value(
 	}
 #ifdef _HTTPPARSER_DEBUG_
 	printf("  %s=%s",param_name,name);
-#endif	
+#endif
 
 	return name;
 }
@@ -274,7 +278,7 @@ uint8_t * get_http_uri_name(uint8_t * uri)
 
 #ifdef _HTTPPARSER_DEBUG_
 	printf("  uri_name = %s\r\n", uri_name);
-#endif	
+#endif
 
 	return uri_name;
 }
