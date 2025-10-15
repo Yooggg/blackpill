@@ -1,7 +1,7 @@
 /**
  * @file	httpUtil.c
- * @brief	HTTP Server Utilities (Updated for FatFS)
- * @version 2.0
+ * @brief	HTTP Server Utilities (Fixed boundary detection bug)
+ * @version 2.2
  * @date	2025/01/XX
  */
 
@@ -14,9 +14,6 @@
 #include <stdbool.h>
 
 #define MAX_FILENAME_LEN 128
-
-// Макрос для отладки (раскомментируйте для включения)
-// #define HTTP_DEBUG
 
 /**
  * @brief Обработчик GET запросов (список файлов, создание папок)
@@ -39,7 +36,7 @@ uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_
 		// ВАЖНО: Убираем слэш в конце для f_opendir (кроме корня)
 		size_t path_len = strlen(path);
 		if (path_len > 1 && path[path_len - 1] == '/') {
-			path[path_len - 1] = '\0';  // Убрать последний /
+			path[path_len - 1] = '\0';
 			path_len--;
 		}
 
@@ -58,7 +55,7 @@ uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_
 			// Читать содержимое директории
 			while (1) {
 				res = f_readdir(&dir, &fno);
-				if (res != FR_OK || fno.fname[0] == 0) break;  // Конец директории или ошибка
+				if (res != FR_OK || fno.fname[0] == 0) break;
 
 				// Пропустить точку и две точки
 				if (strcmp(fno.fname, ".") == 0 || strcmp(fno.fname, "..") == 0) {
@@ -92,7 +89,6 @@ uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_
 			f_closedir(&dir);
 		} else {
 			printf("[HTTP] Error opening directory: %d\r\n", res);
-			// Возвращаем пустые списки при ошибке
 		}
 
 		// Формируем JSON ответ
@@ -138,7 +134,6 @@ uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_
 			}
 		} else {
 			printf("[HTTP] Missing 'name' parameter in mkdir request\r\n");
-			printf("[HTTP] buf content: %s\r\n", buf);
 			return HTTP_FAILED;
 		}
 	}
@@ -208,6 +203,13 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 	{
 		char folder[128] = "";
 		if (get_query_param((char*)buf, "name", folder, sizeof(folder))) {
+
+			// Убрать слэш в конце (кроме корня)
+			size_t len = strlen(folder);
+			if (len > 1 && folder[len-1] == '/') {
+				folder[len-1] = '\0';
+			}
+
 			FRESULT res = f_mkdir(folder);
 
 			if (res == FR_OK || res == FR_EXIST) {
@@ -228,9 +230,6 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 	// === API: Загрузка файла ===
 	else if (strncmp((char*)uri_name, "api/upload.cgi", 14) == 0)
 	{
-		// === API: Потоковая загрузка файла (НОВАЯ ВЕРСИЯ) ===
-
-		// Нужен доступ к HTTPSock_Status - объявляем extern
 		extern st_http_socket HTTPSock_Status[_WIZCHIP_SOCK_NUM_];
 		extern uint8_t * pHTTP_RX;
 
@@ -277,25 +276,34 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 		}
 		filename[filename_length] = '\0';
 
-		// Формируем полный путь
+		// === ИСПРАВЛЕНО: Правильная обработка пути ===
 		char full_path[256] = "";
 		if (strlen(upload_path) > 0) {
 			strcpy(full_path, upload_path);
 
 			// Создаем директорию если нужно
 			if (strcmp(full_path, "/") != 0) {
-				size_t len = strlen(full_path);
-				if (len > 1 && full_path[len-1] == '/') {
-					full_path[len-1] = '\0';
+				// КРИТИЧНО: Используем копию пути для mkdir
+				char mkdir_path[256];
+				strcpy(mkdir_path, full_path);
+
+				// Убираем слэш в конце ТОЛЬКО для mkdir
+				size_t len = strlen(mkdir_path);
+				if (len > 1 && mkdir_path[len-1] == '/') {
+					mkdir_path[len-1] = '\0';
 				}
 
-				FRESULT res = f_mkdir(full_path);
+				FRESULT res = f_mkdir(mkdir_path);
 				if (res == FR_OK) {
-					printf("[HTTP] Directory created: %s\r\n", full_path);
+					printf("[HTTP] Directory created: %s\r\n", mkdir_path);
 				} else if (res != FR_EXIST) {
-					printf("[HTTP] Warning: Failed to create directory: %s (error %d)\r\n", full_path, res);
+					printf("[HTTP] Warning: Failed to create directory: %s (error %d)\r\n", mkdir_path, res);
 				}
+			}
 
+			// КРИТИЧНО: Убеждаемся что путь заканчивается на /
+			size_t len = strlen(full_path);
+			if (len > 0 && full_path[len-1] != '/') {
 				strcat(full_path, "/");
 			}
 
@@ -321,53 +329,90 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 
 		printf("[HTTP] File opened successfully\r\n");
 
-		// === ВЫЧИСЛЯЕМ РАЗМЕР ДАННЫХ В ПЕРВОМ ПАКЕТЕ ===
-		uint32_t data_in_first_packet = 0;
+		// === ШАГ 1: ВЫЧИСЛЯЕМ ДОСТУПНЫЕ ДАННЫЕ В БУФЕРЕ ===
+		uint32_t available = (uint32_t)(request.content_end - request.content_start);
+		printf("[HTTP] Available data in buffer: %lu bytes\r\n", available);
 
-		if (request.content_end > request.content_start) {
-			data_in_first_packet = (uint32_t)(request.content_end - request.content_start);
+		// === ШАГ 2: ИЩЕМ BOUNDARY В КОНЦЕ БУФЕРА ===
+		uint32_t search_window = 200;
+		char* search_start = (available > search_window) ?
+			(request.content_end - search_window) : request.content_start;
+
+		char* boundary_pos = strstr(search_start, "\r\n--");
+		if (boundary_pos && (boundary_pos >= request.content_start)) {
+			// Boundary найден - это реальный конец данных файла
+			available = (uint32_t)(boundary_pos - request.content_start);
+			printf("[HTTP] Boundary found at offset %lu, file data size: %lu bytes\r\n",
+				   (uint32_t)(boundary_pos - request.content_start), available);
 		}
 
-		printf("[HTTP] Data in first packet: %lu bytes\r\n", data_in_first_packet);
+		// === ШАГ 3: ОГРАНИЧИВАЕМ РАЗМЕР CONTENT-LENGTH ===
+		uint32_t to_write = (available > request.content_length) ?
+			request.content_length : available;
 
-		// === ЗАПИСЫВАЕМ ДАННЫЕ ИЗ ПЕРВОГО ПАКЕТА ===
+		printf("[HTTP] Will write: %lu bytes (available=%lu, content_length=%lu)\r\n",
+			   to_write, available, request.content_length);
+
+		// === ШАГ 4: ЗАПИСЫВАЕМ ТОЛЬКО НУЖНОЕ КОЛИЧЕСТВО ДАННЫХ ===
 		UINT bytes_written = 0;
-		if (data_in_first_packet > 0) {
+		if (to_write > 0) {
 			res = f_write(&HTTPSock_Status[seq].upload_file,
 						 request.content_start,
-						 data_in_first_packet,
+						 to_write,
 						 &bytes_written);
 
 			if (res != FR_OK) {
-				printf("[HTTP] Failed to write first chunk (error %d)\r\n", res);
+				printf("[HTTP] Failed to write (error %d)\r\n", res);
 				f_close(&HTTPSock_Status[seq].upload_file);
 				sprintf((char*)buf, "WRITE_ERROR_%d", res);
 				*file_len = strlen((char*)buf);
 				return HTTP_FAILED;
 			}
 
-			printf("[HTTP] Written first chunk: %u bytes\r\n", bytes_written);
+			printf("[HTTP] Written: %u bytes\r\n", bytes_written);
 		}
 
-		// === ИНИЦИАЛИЗИРУЕМ СОСТОЯНИЕ ПОТОКОВОЙ ЗАГРУЗКИ ===
+		// === ШАГ 5: ПРОВЕРЯЕМ - ФАЙЛ ПОЛНОСТЬЮ ПОЛУЧЕН? ===
+		if (bytes_written >= request.content_length) {
+			// Весь файл уже в первом пакете!
+			printf("[HTTP] File complete! Written %u of %lu bytes\r\n",
+				   bytes_written, request.content_length);
+
+			// === КРИТИЧНО: Flush файла перед закрытием ===
+			FRESULT sync_result = f_sync(&HTTPSock_Status[seq].upload_file);
+			FRESULT close_result = f_close(&HTTPSock_Status[seq].upload_file);
+
+			printf("[HTTP] File closed (sync=%d, close=%d)\r\n", sync_result, close_result);
+
+			// === КРИТИЧНО: Flush метаданных родительской директории ===
+			// Это заставит FatFS записать directory entry на диск
+			DIR parent_dir;
+			FRESULT dir_result = f_opendir(&parent_dir, upload_path);
+			if (dir_result == FR_OK) {
+				f_closedir(&parent_dir);
+				printf("[HTTP] Parent directory flushed\r\n");
+			} else {
+				printf("[HTTP] WARNING: Failed to flush parent directory (error %d)\r\n", dir_result);
+			}
+
+			strcpy((char*)buf, "OK");
+			*file_len = 2;
+			return HTTP_OK;
+		}
+
+		// === ШАГ 6: ФАЙЛ БОЛЬШОЙ - ПЕРЕХОДИМ В ПОТОКОВЫЙ РЕЖИМ ===
+		printf("[HTTP] Large file detected, switching to streaming mode\r\n");
+
 		HTTPSock_Status[seq].upload_active = 1;
 		HTTPSock_Status[seq].upload_content_length = request.content_length;
-
-		// === КРИТИЧНО: Считаем ТОЛЬКО данные файла, БЕЗ заголовков! ===
-		HTTPSock_Status[seq].upload_bytes_received = data_in_first_packet;  // Только данные
+		HTTPSock_Status[seq].upload_bytes_received = bytes_written;
 		HTTPSock_Status[seq].upload_bytes_written = bytes_written;
-
-		// === ПЕРЕВОДИМ СОКЕТ В РЕЖИМ ПОТОКОВОЙ ЗАГРУЗКИ ===
 		HTTPSock_Status[seq].sock_status = STATE_HTTP_UPLOAD;
 
-		printf("[HTTP] Switched to streaming mode. Received: %lu / %lu\r\n",
+		printf("[HTTP] Streaming mode: Received %lu / %lu bytes\r\n",
 			   HTTPSock_Status[seq].upload_bytes_received,
 			   HTTPSock_Status[seq].upload_content_length);
 
-		// === КРИТИЧНО: НЕ ОТПРАВЛЯЕМ ОТВЕТ СЕЙЧАС ===
-		// Ответ будет отправлен в httpServer.c когда вся загрузка завершится
-
-		// Возвращаем специальный код что загрузка началась
 		*file_len = 0;
 		return HTTP_OK;
 	}
@@ -378,14 +423,19 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 		char path[128] = "";
 		if (get_query_param((char*)buf, "path", path, sizeof(path))) {
 
+			// Убрать слэш (кроме корня)
+			size_t len = strlen(path);
+			if (len > 1 && path[len-1] == '/') {
+				path[len-1] = '\0';
+			}
+
 			// Проверяем - это файл или папка
 			FILINFO fno;
 			FRESULT res = f_stat(path, &fno);
 
 			if (res == FR_OK) {
 				if (fno.fattrib & AM_DIR) {
-					// Это папка
-					res = f_unlink(path);  // f_unlink работает и для папок (если пуста)
+					res = f_unlink(path);
 
 					if (res == FR_OK) {
 						printf("[HTTP] Directory deleted: %s\r\n", path);
@@ -396,7 +446,6 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 						return HTTP_FAILED;
 					}
 				} else {
-					// Это файл
 					res = f_unlink(path);
 					if (res == FR_OK) {
 						printf("[HTTP] File deleted: %s\r\n", path);
@@ -415,13 +464,6 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 			*file_len = 5;
 			return HTTP_FAILED;
 		}
-		return HTTP_FAILED;
-	}
-
-	// === API: Скачивание файла ===
-	else if (strncmp((char*)uri_name, "api/download.cgi", 16) == 0)
-	{
-		// Для скачивания используется GET метод, здесь только заглушка
 		return HTTP_FAILED;
 	}
 
@@ -495,65 +537,35 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 	}
 	request->content_start += 4;
 
-	// === 5. КОНЕЦ данных - ТОЛЬКО ДЛЯ ПЕРВОГО ПАКЕТА! ===
+	// === 5. КОНЕЦ данных ===
+	// Для определения конца доступных данных используем размер буфера
+	extern uint8_t * pHTTP_RX;
+	uint32_t buffer_size = 4096;  // Размер буфера приёма
 
-	// КРИТИЧНО: Ищем boundary в данных
-	char* boundary_in_data = strstr(request->content_start, "\r\n--");
+	char* buffer_start = (char*)pHTTP_RX;
+	request->content_end = buffer_start + buffer_size;
 
-	if (boundary_in_data) {
-		// Boundary найден - значит весь файл поместился в первый пакет
-		request->content_end = boundary_in_data;
-		printf("[HTTP] Small file: boundary found in first packet\r\n");
-	} else {
-		// Boundary НЕ найден - файл больше буфера
-		// Берем все данные до конца буфера (4096 байт)
+	uint32_t available = (uint32_t)(request->content_end - request->content_start);
 
-		// Вычисляем размер буфера
-		extern uint8_t * pHTTP_RX;
-		uint32_t buffer_size = 4096;  // Размер RX буфера httpServer
-
-		// Конец первого пакета = начало буфера + размер буфера
-		char* buffer_start = (char*)pHTTP_RX;
-		request->content_end = buffer_start + buffer_size;
-
-		// Но не выходим за пределы данных
-		uint32_t available = (uint32_t)(request->content_end - request->content_start);
-
-		printf("[HTTP] Large file: taking all available data (%lu bytes)\r\n", available);
-	}
-
-	// === 6. Валидация ===
-	if (request->content_end <= request->content_start) {
-		printf("[HTTP] ERROR: Invalid boundaries\r\n");
-		return HTTP_FAILED;
-	}
-
-	uint32_t calc_size = (uint32_t)(request->content_end - request->content_start);
-	printf("[HTTP] First packet data size: %lu bytes\r\n", calc_size);
+	printf("[HTTP] Available data in first packet: %lu bytes\r\n", available);
 
 	return HTTP_OK;
 }
 
 /**
  * @brief Получение GET параметра из URI
- * @param uri URI строка (например: "list.cgi?path=/web")
- * @param key Имя параметра (например: "path")
- * @param out Буфер для результата
- * @param max_len Максимальный размер буфера
- * @return 1 если параметр найден, 0 если нет
  */
 int get_query_param(const char* uri, const char* key, char* out, size_t max_len)
 {
 	char* pos = strstr(uri, "?");
 	if (!pos) return 0;
-	pos++; // Пропустить '?'
+	pos++;
 
 	if (strncmp(pos, key, strlen(key)) == 0 && pos[strlen(key)] == '=') {
 		char* value = pos + strlen(key) + 1;
 		pos = value;
 		int i = 0;
 
-		// Декодирование URL (например %2F -> /)
 		while (*value && i < (max_len - 1)) {
 			if ((value[0] == '%') && (value[1] == '2') && (value[2] == 'F')) {
 				out[i++] = '/';
@@ -565,7 +577,7 @@ int get_query_param(const char* uri, const char* key, char* out, size_t max_len)
 				out[i++] = ' ';
 				value++;
 			} else if (value[0] == '&' || value[0] == ' ') {
-				break;  // Конец параметра
+				break;
 			} else {
 				out[i++] = *value++;
 			}

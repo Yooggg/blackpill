@@ -438,9 +438,9 @@ void Task_Flash_Func()
 	FRESULT FR_Status;
 	UINT RWC, WWC;
 	char RW_Buffer[256];
-//	BYTE work[4096];
-//	f_mkfs("0:", FM_FAT, 0, work, sizeof(work));
-//	f_mount(&FatFs, "0:", 1);
+/*	BYTE work[4096];
+	f_mkfs("0:", FM_FAT, 0, work, sizeof(work));
+	f_mount(&FatFs, "0:", 1);*/
 	printf("\r\n=== Mounting FatFS ===\r\n");
 
 	// Монтирование файловой системы

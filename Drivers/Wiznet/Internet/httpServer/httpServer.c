@@ -10,7 +10,7 @@
 #include "../../../Wiznet/Internet/httpServer/httpUtil.h"
 
 #ifdef	_USE_SDCARD_
-#include "ff.h" 	// header file for FatFs library (FAT file system)
+#include "ff.h"
 #endif
 
 #ifndef DATA_BUF_SIZE
@@ -21,12 +21,11 @@
  * Private types/enumerations/variables
  ****************************************************************************/
 uint8_t HTTPSock_Num[_WIZCHIP_SOCK_NUM_] = {0, };
-static st_http_request * http_request;				/**< Pointer to received HTTP request */
-static st_http_request * parsed_http_request;		/**< Pointer to parsed HTTP request */
-static uint8_t * http_response;						/**< Pointer to HTTP response */
+static st_http_request * http_request;
+static st_http_request * parsed_http_request;
+static uint8_t * http_response;
 static uint8_t current_file_is_gzip = 0;
 
-// Number of registered web content in code flash memory
 static uint16_t total_content_cnt = 0;
 
 /*****************************************************************************
@@ -40,8 +39,8 @@ st_http_socket HTTPSock_Status[_WIZCHIP_SOCK_NUM_] = { {STATE_HTTP_IDLE, }, };
 httpServer_webContent web_content[MAX_CONTENT_CALLBACK];
 
 #ifdef	_USE_SDCARD_
-FIL fs;		// FatFs: File object
-FRESULT fr;	// FatFs: File function return code
+FIL fs;
+FRESULT fr;
 #endif
 
 /*****************************************************************************
@@ -60,7 +59,6 @@ static void send_http_response_cgi(uint8_t s, uint8_t * buf, uint8_t * http_body
 /*****************************************************************************
  * Public functions
  ****************************************************************************/
-// Callback functions definition: MCU Reset / WDT Reset
 void default_mcu_reset(void) {;}
 void default_wdt_reset(void) {;}
 void (*HTTPServer_ReStart)(void) = default_mcu_reset;
@@ -72,14 +70,12 @@ void httpServer_Sockinit(uint8_t cnt, uint8_t * socklist)
 
 	for(i = 0; i < cnt; i++)
 	{
-		// Mapping the H/W socket numbers to the sequential index numbers
 		HTTPSock_Num[i] = socklist[i];
 	}
 }
 
 static uint8_t getHTTPSocketNum(uint8_t seqnum)
 {
-	// Return the 'H/W socket number' corresponding to the index number
 	return HTTPSock_Num[seqnum];
 }
 
@@ -95,27 +91,21 @@ static int8_t getHTTPSequenceNum(uint8_t socket)
 
 void httpServer_init(uint8_t * tx_buf, uint8_t * rx_buf, uint8_t cnt, uint8_t * socklist)
 {
-	// User's shared buffer
 	pHTTP_TX = tx_buf;
 	pHTTP_RX = rx_buf;
 
-	// H/W Socket number mapping
 	httpServer_Sockinit(cnt, socklist);
 }
 
-
-/* Register the call back functions for HTTP Server */
 void reg_httpServer_cbfunc(void(*mcu_reset)(void), void(*wdt_reset)(void))
 {
-	// Callback: HW Reset and WDT reset function for each MCU platforms
 	if(mcu_reset) HTTPServer_ReStart = mcu_reset;
 	if(wdt_reset) HTTPServer_WDT_Reset = wdt_reset;
 }
 
-
 void httpServer_run(uint8_t seqnum)
 {
-	uint8_t s;	// socket number
+	uint8_t s;
 	uint16_t len;
 	uint32_t gettime = 0;
 
@@ -124,23 +114,19 @@ void httpServer_run(uint8_t seqnum)
 	uint16_t destport = 0;
 #endif
 
-	http_request = (st_http_request *)pHTTP_RX;		// Structure of HTTP Request
+	http_request = (st_http_request *)pHTTP_RX;
 	parsed_http_request = (st_http_request *)pHTTP_TX;
 
-	// Get the H/W socket number
 	s = getHTTPSocketNum(seqnum);
 
-	/* HTTP Service Start */
 	switch(getSn_SR(s))
 	{
 		case SOCK_ESTABLISHED:
-			// Interrupt clear
 			if(getSn_IR(s) & Sn_IR_CON)
 			{
 				setSn_IR(s, Sn_IR_CON);
 			}
 
-			// HTTP Process states
 			switch(HTTPSock_Status[seqnum].sock_status)
 			{
 
@@ -154,13 +140,11 @@ void httpServer_run(uint8_t seqnum)
 
 						parse_http_request(parsed_http_request, (uint8_t *)http_request);
 
-
 						if(strlen((char*)parsed_http_request->URI) == 1 &&
 						   parsed_http_request->URI[0] == '/') {
 							strcpy((char*)parsed_http_request->URI, "/index.html");
 							printf("[HTTP] Root requested, serving index.html\r\n");
 						}
-
 
 						#ifdef _HTTPSERVER_DEBUG_
 							getSn_DIPR(s, destip);
@@ -172,20 +156,16 @@ void httpServer_run(uint8_t seqnum)
 #ifdef _HTTPSERVER_DEBUG_
 						printf("> HTTPSocket[%d] : [State] STATE_HTTP_REQ_DONE\r\n", s);
 #endif
-						// HTTP 'response' handler; includes send_http_response_header / body function
 						http_process_handler(s, parsed_http_request);
 
-						// === КРИТИЧНО: НЕ ПЕРЕЗАПИСЫВАЕМ STATE_HTTP_UPLOAD! ===
 						if(HTTPSock_Status[seqnum].sock_status == STATE_HTTP_UPLOAD) {
-							// Потоковая загрузка началась - НЕ ТРОГАЕМ состояние!
 #ifdef _HTTPSERVER_DEBUG_
 							printf("> HTTPSocket[%d] : [State] Streaming upload started, keeping STATE_HTTP_UPLOAD\r\n", s);
 #endif
-							break;  // Остаемся в STATE_HTTP_IDLE, но sock_status = STATE_HTTP_UPLOAD
+							break;
 						}
 
 						gettime = get_httpServer_timecount();
-						// Check the TX socket buffer for End of HTTP response sends
 						while(getSn_TX_FSR(s) != (getSn_TxMAX(s)))
 						{
 							if((get_httpServer_timecount() - gettime) > 3)
@@ -198,16 +178,22 @@ void httpServer_run(uint8_t seqnum)
 						}
 
 						if(HTTPSock_Status[seqnum].file_len > 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_INPROC;
-						else HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE; // Send the 'HTTP response' end
+						else HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
 					}
 					break;
 
 				case STATE_HTTP_RES_INPROC :
-					/* Repeat: Send the remain parts of HTTP responses */
 #ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : [State] STATE_HTTP_RES_INPROC\r\n", s);
 #endif
-					// Repeatedly send remaining data to client
+					if(HTTPSock_Status[seqnum].file_len == 0) {
+#ifdef _HTTPSERVER_DEBUG_
+						printf("> HTTPSocket[%d] : [State] File transfer complete, moving to RES_DONE\r\n", s);
+#endif
+						HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
+						break;
+					}
+
 					send_http_response_body(s, 0, http_response, 0, 0);
 
 					if(HTTPSock_Status[seqnum].file_len == 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
@@ -216,15 +202,10 @@ void httpServer_run(uint8_t seqnum)
 				case STATE_HTTP_UPLOAD:
 #ifdef _USE_SDCARD_
 				{
-					// === ПОТОКОВАЯ ЗАГРУЗКА ФАЙЛА ===
-
-					// Проверяем есть ли данные в сокете
 					if ((len = getSn_RX_RSR(s)) > 0)
 					{
-						// Ограничиваем размер чтения буфером
 						if (len > DATA_BUF_SIZE - 1) len = DATA_BUF_SIZE - 1;
 
-						// Читаем данные из сокета
 						len = recv(s, (uint8_t *)http_request, len);
 
 						if (len > 0) {
@@ -232,13 +213,10 @@ void httpServer_run(uint8_t seqnum)
 							printf("> HTTPSocket[%d] : [Upload] Received %d bytes\r\n", s, len);
 #endif
 
-							// Вычисляем сколько данных нужно записать в файл
 							uint32_t bytes_to_write = len;
 							uint32_t total_received_after = HTTPSock_Status[seqnum].upload_bytes_received + len;
 
-							// Проверяем - не превысили ли размер файла
 							if (total_received_after >= HTTPSock_Status[seqnum].upload_content_length) {
-								// Это последний пакет - нужно обрезать boundary
 								uint32_t remaining = HTTPSock_Status[seqnum].upload_content_length -
 													HTTPSock_Status[seqnum].upload_bytes_received;
 
@@ -251,7 +229,6 @@ void httpServer_run(uint8_t seqnum)
 								}
 							}
 
-							// Записываем данные в файл
 							if (bytes_to_write > 0) {
 								UINT bytes_written = 0;
 								FRESULT res = f_write(&HTTPSock_Status[seqnum].upload_file,
@@ -263,11 +240,9 @@ void httpServer_run(uint8_t seqnum)
 #ifdef _HTTPSERVER_DEBUG_
 									printf("> HTTPSocket[%d] : [Upload] ERROR: f_write failed, code %d\r\n", s, res);
 #endif
-									// Закрываем файл при ошибке
 									f_close(&HTTPSock_Status[seqnum].upload_file);
 									HTTPSock_Status[seqnum].upload_active = 0;
 
-									// Отправляем ошибку
 									const char* error_response = "HTTP/1.1 500 Internal Server Error\r\n"
 																 "Content-Type: text/plain\r\n"
 																 "Content-Length: 12\r\n"
@@ -290,20 +265,28 @@ void httpServer_run(uint8_t seqnum)
 #endif
 							}
 
-							// Проверяем - все ли данные получены
 							if (HTTPSock_Status[seqnum].upload_bytes_received >=
 								HTTPSock_Status[seqnum].upload_content_length)
 							{
-								// Закрываем файл
-								f_close(&HTTPSock_Status[seqnum].upload_file);
+								// === КРИТИЧНО: Принудительный flush перед закрытием ===
+								FRESULT sync_result = f_sync(&HTTPSock_Status[seqnum].upload_file);
+								if (sync_result != FR_OK) {
+#ifdef _HTTPSERVER_DEBUG_
+									printf("> HTTPSocket[%d] : [Upload] WARNING: f_sync failed (error %d)\r\n", s, sync_result);
+#endif
+								}
+
+								FRESULT close_result = f_close(&HTTPSock_Status[seqnum].upload_file);
 								HTTPSock_Status[seqnum].upload_active = 0;
+								HTTPSock_Status[seqnum].upload_bytes_received = 0;
+								HTTPSock_Status[seqnum].upload_bytes_written = 0;
+								HTTPSock_Status[seqnum].upload_content_length = 0;
 
 #ifdef _HTTPSERVER_DEBUG_
-								printf("> HTTPSocket[%d] : [Upload] COMPLETE! Total written: %lu bytes\r\n",
-									   s, HTTPSock_Status[seqnum].upload_bytes_written);
+								printf("> HTTPSocket[%d] : [Upload] COMPLETE! Total written: %lu bytes (sync=%d, close=%d)\r\n",
+									   s, HTTPSock_Status[seqnum].upload_bytes_written, sync_result, close_result);
 #endif
 
-								// Отправляем успешный ответ
 								const char* success_response = "HTTP/1.1 200 OK\r\n"
 															  "Content-Type: text/plain\r\n"
 															  "Content-Length: 2\r\n"
@@ -311,7 +294,6 @@ void httpServer_run(uint8_t seqnum)
 															  "OK";
 								send(s, (uint8_t*)success_response, strlen(success_response));
 
-								// === КРИТИЧНО: Дождаться отправки данных перед закрытием ===
 								gettime = get_httpServer_timecount();
 								while(getSn_TX_FSR(s) != getSn_TxMAX(s))
 								{
@@ -324,7 +306,6 @@ void httpServer_run(uint8_t seqnum)
 									}
 								}
 
-								// Переходим в состояние завершения
 								HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
 							}
 						}
@@ -337,24 +318,55 @@ void httpServer_run(uint8_t seqnum)
 #ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : [State] STATE_HTTP_RES_DONE\r\n", s);
 #endif
-					// Socket file info structure re-initialize
 					HTTPSock_Status[seqnum].file_len = 0;
 					HTTPSock_Status[seqnum].file_offset = 0;
 					HTTPSock_Status[seqnum].file_start = 0;
+					HTTPSock_Status[seqnum].storage_type = NONE;
 					HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
 
-					// === ДОБАВЬ ЭТО: Очистка состояния загрузки ===
 #ifdef _USE_SDCARD_
-					HTTPSock_Status[seqnum].upload_active = 0;
-					HTTPSock_Status[seqnum].upload_bytes_received = 0;
-					HTTPSock_Status[seqnum].upload_bytes_written = 0;
-					HTTPSock_Status[seqnum].upload_content_length = 0;
+					if(HTTPSock_Status[seqnum].upload_active) {
+						FRESULT sync_result = f_sync(&HTTPSock_Status[seqnum].upload_file);
+						FRESULT close_result = f_close(&HTTPSock_Status[seqnum].upload_file);
+						HTTPSock_Status[seqnum].upload_active = 0;
+						HTTPSock_Status[seqnum].upload_bytes_received = 0;
+						HTTPSock_Status[seqnum].upload_bytes_written = 0;
+						HTTPSock_Status[seqnum].upload_content_length = 0;
+#ifdef _HTTPSERVER_DEBUG_
+						printf("> HTTPSocket[%d] : [RES_DONE] Upload file synced and closed (sync=%d, close=%d)\r\n",
+							   s, sync_result, close_result);
+#endif
+					}
+#endif
+
+#ifdef _HTTPSERVER_DEBUG_
+					printf("> HTTPSocket[%d] : [RES_DONE] Waiting for TX buffer to clear...\r\n", s);
+#endif
+					gettime = get_httpServer_timecount();
+					while(getSn_TX_FSR(s) != getSn_TxMAX(s))
+					{
+						if((get_httpServer_timecount() - gettime) > 3)
+						{
+#ifdef _HTTPSERVER_DEBUG_
+							printf("> HTTPSocket[%d] : [RES_DONE] TX clear timeout (FSR=%d, TxMAX=%d)\r\n",
+								   s, getSn_TX_FSR(s), getSn_TxMAX(s));
+#endif
+							break;
+						}
+					}
+
+#ifdef _HTTPSERVER_DEBUG_
+					printf("> HTTPSocket[%d] : [RES_DONE] TX buffer cleared, calling disconnect\r\n", s);
 #endif
 
 #ifdef _USE_WATCHDOG_
 					HTTPServer_WDT_Reset();
 #endif
 					http_disconnect(s);
+
+#ifdef _HTTPSERVER_DEBUG_
+					printf("> HTTPSocket[%d] : [RES_DONE] Disconnect called, socket status = %d\r\n", s, getSn_SR(s));
+#endif
 					break;
 
 				default :
@@ -364,16 +376,66 @@ void httpServer_run(uint8_t seqnum)
 
 		case SOCK_CLOSE_WAIT:
 #ifdef _HTTPSERVER_DEBUG_
-		printf("> HTTPSocket[%d] : ClOSE_WAIT\r\n", s);	// if a peer requests to close the current connection
+			printf("> HTTPSocket[%d] : CLOSE_WAIT\r\n", s);
+#endif
+#ifdef _USE_SDCARD_
+			if(HTTPSock_Status[seqnum].file_len > 0 &&
+			   HTTPSock_Status[seqnum].storage_type == SDCARD) {
+				f_sync(&fs);
+				FRESULT close_result = f_close(&fs);
+
+#ifdef _HTTPSERVER_DEBUG_
+				if(close_result != FR_OK) {
+					printf("> HTTPSocket[%d] : [CLOSE_WAIT] ERROR: f_close failed with code %d!\r\n", s, close_result);
+				}
+				printf("> HTTPSocket[%d] : [CLOSE_WAIT] File synced and closed at offset %ld (result=%d)\r\n",
+					   s, HTTPSock_Status[seqnum].file_offset, close_result);
+#endif
+				HTTPSock_Status[seqnum].file_len = 0;
+				HTTPSock_Status[seqnum].file_offset = 0;
+				HTTPSock_Status[seqnum].storage_type = NONE;
+			}
+
+			if(HTTPSock_Status[seqnum].upload_active) {
+				f_sync(&HTTPSock_Status[seqnum].upload_file);
+				FRESULT close_result = f_close(&HTTPSock_Status[seqnum].upload_file);
+				HTTPSock_Status[seqnum].upload_active = 0;
+				HTTPSock_Status[seqnum].upload_bytes_received = 0;
+				HTTPSock_Status[seqnum].upload_bytes_written = 0;
+				HTTPSock_Status[seqnum].upload_content_length = 0;
+#ifdef _HTTPSERVER_DEBUG_
+				printf("> HTTPSocket[%d] : [CLOSE_WAIT] Upload file synced and closed (result=%d)\r\n", s, close_result);
+#endif
+			}
 #endif
 			disconnect(s);
+			break;
+
+		case SOCK_FIN_WAIT:
+#ifdef _HTTPSERVER_DEBUG_
+		printf("> HTTPSocket[%d] : FIN_WAIT - forcing close\r\n", s);
+#endif
+			close(s);
 			break;
 
 		case SOCK_CLOSED:
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : CLOSED\r\n", s);
 #endif
-			if(socket(s, Sn_MR_TCP, HTTP_SERVER_PORT, 0x00) == s)    /* Reinitialize the socket */
+			HTTPSock_Status[seqnum].file_len = 0;
+			HTTPSock_Status[seqnum].file_offset = 0;
+			HTTPSock_Status[seqnum].file_start = 0;
+			HTTPSock_Status[seqnum].storage_type = NONE;
+			HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
+
+#ifdef _USE_SDCARD_
+			HTTPSock_Status[seqnum].upload_active = 0;
+			HTTPSock_Status[seqnum].upload_bytes_received = 0;
+			HTTPSock_Status[seqnum].upload_bytes_written = 0;
+			HTTPSock_Status[seqnum].upload_content_length = 0;
+#endif
+
+			if(socket(s, Sn_MR_TCP, HTTP_SERVER_PORT, 0x00) == s)
 			{
 #ifdef _HTTPSERVER_DEBUG_
 				printf("> HTTPSocket[%d] : OPEN\r\n", s);
@@ -391,7 +453,7 @@ void httpServer_run(uint8_t seqnum)
 		default :
 			break;
 
-	} // end of switch
+	}
 
 #ifdef _USE_WATCHDOG_
 	HTTPServer_WDT_Reset();
@@ -409,18 +471,15 @@ static void send_http_response_header(uint8_t s, uint8_t content_type, uint32_t 
 	switch(http_status)
 	{
 		case STATUS_OK:
-			// If GZIP file - add Content-Encoding header
 			if(current_file_is_gzip) {
 				char * mime_type = "";
 
-				// Determine MIME type
 				if(content_type == PTYPE_JS) mime_type = "application/javascript";
 				else if(content_type == PTYPE_CSS) mime_type = "text/css";
 				else if(content_type == PTYPE_HTML) mime_type = "text/html";
 				else if(content_type == PTYPE_JSON) mime_type = "application/json";
 				else mime_type = "application/octet-stream";
 
-				// Format GZIP header
 				sprintf((char*)head_buf,
 					"HTTP/1.1 200 OK\r\n"
 					"Content-Type: %s\r\n"
@@ -432,7 +491,6 @@ static void send_http_response_header(uint8_t s, uint8_t content_type, uint32_t 
 				printf("[HTTP] Sending GZIP response header (type: %s, len: %ld)\r\n", mime_type, body_len);
 			}
 			else {
-				// Normal header without gzip
 				make_http_response_head((char*)head_buf, content_type, body_len);
 			}
 			break;
@@ -467,10 +525,9 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 	uint32_t addr = 0;
 #endif
 
-	if((get_seqnum = getHTTPSequenceNum(s)) == -1) return; // exception handling; invalid number
+	if((get_seqnum = getHTTPSequenceNum(s)) == -1) return;
 
-	// Send the HTTP Response 'body'; requested file
-	if(!HTTPSock_Status[get_seqnum].file_len) // ### Send HTTP response body: First part ###
+	if(!HTTPSock_Status[get_seqnum].file_len)
 	{
 		if (file_len > DATA_BUF_SIZE - 1)
 		{
@@ -478,14 +535,11 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 			HTTPSock_Status[get_seqnum].file_len = file_len;
 			send_len = DATA_BUF_SIZE - 1;
 
-/////////////////////////////////////////////////////////////////////////////////////////////////
-// ## 20141219 Eric added, for 'File object structure' (fs) allocation reduced (8 -> 1)
 			memset(HTTPSock_Status[get_seqnum].file_name, 0x00, MAX_CONTENT_NAME_LEN);
 			strcpy((char *)HTTPSock_Status[get_seqnum].file_name, (char *)uri_name);
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : HTTP Response body - file name [ %s ]\r\n", s, HTTPSock_Status[get_seqnum].file_name);
 #endif
-/////////////////////////////////////////////////////////////////////////////////////////////////
 
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : HTTP Response body - file len [ %ld ]byte\r\n", s, file_len);
@@ -493,8 +547,10 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		}
 		else
 		{
-			// Send process end
 			send_len = file_len;
+
+			HTTPSock_Status[get_seqnum].file_len = 0;
+			flag_datasend_end = 1;
 
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : HTTP Response end - file len [ %ld ]byte\r\n", s, send_len);
@@ -504,7 +560,7 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		if(HTTPSock_Status[get_seqnum]->storage_type == DATAFLASH) addr = start_addr;
 #endif
 	}
-	else // remained parts
+	else
 	{
 #ifdef _USE_FLASH_
 		if(HTTPSock_Status[get_seqnum]->storage_type == DATAFLASH)
@@ -521,22 +577,14 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		else
 		{
 #ifdef _HTTPSERVER_DEBUG_
-			printf("> HTTPSocket[%d] : HTTP Response end - file len [ %ld ]byte\r\n", s, HTTPSock_Status[get_seqnum].file_len);
+			printf("> HTTPSocket[%d] : HTTP Response end - remaining [ %ld ]byte\r\n", s, send_len);
 #endif
-			// Send process end
 			flag_datasend_end = 1;
 		}
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : HTTP Response body - send len [ %ld ]byte\r\n", s, send_len);
 #endif
 	}
-
-/*****************************************************/
-	//HTTPSock_Status[get_seqnum]->storage_type == NONE
-	//HTTPSock_Status[get_seqnum]->storage_type == CODEFLASH
-	//HTTPSock_Status[get_seqnum]->storage_type == SDCARD
-	//HTTPSock_Status[get_seqnum]->storage_type == DATAFLASH
-/*****************************************************/
 
 	if(HTTPSock_Status[get_seqnum].storage_type == CODEFLASH)
 	{
@@ -546,18 +594,76 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 #ifdef _USE_SDCARD_
 	else if(HTTPSock_Status[get_seqnum].storage_type == SDCARD)
 	{
-		// Data read from SD Card
 		fr = f_read(&fs, &buf[0], send_len, (void *)&blocklen);
+
 		if(fr != FR_OK)
 		{
 			send_len = 0;
+			flag_datasend_end = 1;
+
+			FRESULT sync_result = f_sync(&fs);
+			FRESULT close_result = f_close(&fs);
+			HTTPSock_Status[get_seqnum].file_len = 0;
+			HTTPSock_Status[get_seqnum].file_offset = 0;
+			HTTPSock_Status[get_seqnum].storage_type = NONE;
+
 #ifdef _HTTPSERVER_DEBUG_
-		printf("> HTTPSocket[%d] : [FatFs] Error code return: %d (File Read) / HTTP Send Failed - %s\r\n", s, fr, HTTPSock_Status[get_seqnum].file_name);
+			printf("> HTTPSocket[%d] : [FatFs] Read error: %d, file synced and closed (sync=%d, close=%d)\r\n",
+				   s, fr, sync_result, close_result);
+#endif
+		}
+		else if(blocklen == 0)
+		{
+			send_len = 0;
+			flag_datasend_end = 1;
+
+			HTTPSock_Status[get_seqnum].file_len = 0;
+			HTTPSock_Status[get_seqnum].file_offset = 0;
+
+			FRESULT sync_result = f_sync(&fs);
+			FRESULT close_result = f_close(&fs);
+			if(close_result != FR_OK) {
+#ifdef _HTTPSERVER_DEBUG_
+				printf("> HTTPSocket[%d] : [FatFs] ERROR: f_close failed with code %d at EOF!\r\n", s, close_result);
+#endif
+			}
+
+			HTTPSock_Status[get_seqnum].storage_type = NONE;
+
+#ifdef _HTTPSERVER_DEBUG_
+			printf("> HTTPSocket[%d] : [FatFs] EOF reached, file synced and closed (sync=%d, close=%d)\r\n",
+				   s, sync_result, close_result);
+#endif
+		}
+		else if(blocklen < send_len)
+		{
+			send_len = blocklen;
+			flag_datasend_end = 1;
+
+			HTTPSock_Status[get_seqnum].file_len = 0;
+			HTTPSock_Status[get_seqnum].file_offset = 0;
+
+			*(buf+send_len) = 0;
+
+			FRESULT sync_result = f_sync(&fs);
+			FRESULT close_result = f_close(&fs);
+			if(close_result != FR_OK) {
+#ifdef _HTTPSERVER_DEBUG_
+				printf("> HTTPSocket[%d] : [FatFs] ERROR: f_close failed with code %d at last chunk!\r\n", s, close_result);
+#endif
+			}
+
+			HTTPSock_Status[get_seqnum].storage_type = NONE;
+
+#ifdef _HTTPSERVER_DEBUG_
+			printf("> HTTPSocket[%d] : [FatFs] Last chunk (%d bytes), file synced and closed (sync=%d, close=%d)\r\n",
+				   s, send_len, sync_result, close_result);
 #endif
 		}
 		else
 		{
-			*(buf+send_len+1) = 0; // Insert '/0' for indicates the 'End of String' (null terminated)
+			send_len = blocklen;
+			*(buf+send_len) = 0;
 		}
 	}
 #endif
@@ -565,22 +671,26 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 #ifdef _USE_FLASH_
 	else if(HTTPSock_Status[get_seqnum]->storage_type == DATAFLASH)
 	{
-		// Data read from external data flash memory
 		read_from_flashbuf(addr, &buf[0], send_len);
-		*(buf+send_len+1) = 0; // Insert '/0' for indicates the 'End of String' (null terminated)
+		*(buf+send_len+1) = 0;
 	}
 #endif
 	else
 	{
 		send_len = 0;
 	}
-	// Requested content send to HTTP client
+
 #ifdef _HTTPSERVER_DEBUG_
 	printf("> HTTPSocket[%d] : [Send] HTTP Response body [ %ld ]byte\r\n", s, send_len);
 #endif
 
 	if(send_len) send(s, buf, send_len);
-	else flag_datasend_end = 1;
+	else {
+		flag_datasend_end = 1;
+#ifdef _HTTPSERVER_DEBUG_
+		printf("> HTTPSocket[%d] : [Send] No data, setting end flag\r\n", s);
+#endif
+	}
 
 	if(flag_datasend_end)
 	{
@@ -588,6 +698,10 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		HTTPSock_Status[get_seqnum].file_len = 0;
 		HTTPSock_Status[get_seqnum].file_offset = 0;
 		flag_datasend_end = 0;
+
+#ifdef _HTTPSERVER_DEBUG_
+		printf("> HTTPSocket[%d] : [Response] Transfer complete\r\n", s);
+#endif
 	}
 	else
 	{
@@ -596,14 +710,6 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		printf("> HTTPSocket[%d] : HTTP Response body - offset [ %ld ]\r\n", s, HTTPSock_Status[get_seqnum].file_offset);
 #endif
 	}
-
-// ## 20141219 Eric added, for 'File object structure' (fs) allocation reduced (8 -> 1)
-#ifdef _USE_SDCARD_
-	if(flag_datasend_end) {
-			f_close(&fs);
-		}
-#endif
-// ## 20141219 added end
 }
 
 static void send_http_response_cgi(uint8_t s, uint8_t * buf, uint8_t * http_body, uint16_t file_len)
@@ -621,16 +727,13 @@ static void send_http_response_cgi(uint8_t s, uint8_t * buf, uint8_t * http_body
 	send(s, buf, send_len);
 }
 
-
 static int8_t http_disconnect(uint8_t sn)
 {
 	setSn_CR(sn,Sn_CR_DISCON);
-	/* wait to process the command... */
 	while(getSn_CR(sn));
 
 	return SOCK_OK;
 }
-
 
 static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 {
@@ -645,13 +748,12 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 	int8_t get_seqnum;
 	uint8_t content_found;
 
-	if((get_seqnum = getHTTPSequenceNum(s)) == -1) return; // exception handling; invalid number
+	if((get_seqnum = getHTTPSequenceNum(s)) == -1) return;
 
 	http_status = 0;
 	http_response = pHTTP_RX;
 	file_len = 0;
 
-	//method Analyze
 	switch (p_http_request->METHOD)
 	{
 		case METHOD_ERR :
@@ -664,22 +766,19 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			get_http_uri_name(p_http_request->URI, uri_buf);
 			uri_name = uri_buf;
 
-			// Handle root path "/"
 			if (!strcmp((char *)uri_name, "/")) {
 				strcpy((char *)uri_name, INITIAL_WEBPAGE);
 			}
-			// Handle directory paths ending with "/"
 			else if (strlen((char *)uri_name) > 0 && uri_name[strlen((char *)uri_name) - 1] == '/') {
 				strcat((char *)uri_name, "index.html");
 			}
-			// Legacy mobile paths
 			else if (!strcmp((char *)uri_name, "m")) {
 				strcpy((char *)uri_name, M_INITIAL_WEBPAGE);
 			}
 			else if (!strcmp((char *)uri_name, "mobile")) {
 				strcpy((char *)uri_name, MOBILE_INITIAL_WEBPAGE);
 			}
-			find_http_uri_type(&p_http_request->TYPE, uri_name);	// Checking requested file types (HTML, TEXT, GIF, JPEG and Etc. are included)
+			find_http_uri_type(&p_http_request->TYPE, uri_name);
 
 #ifdef _HTTPSERVER_DEBUG_
 			printf("\r\n> HTTPSocket[%d] : HTTP Method GET\r\n", s);
@@ -701,24 +800,17 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			}
 			else
 			{
-				// Reset GZIP flag
 				current_file_is_gzip = 0;
 
-				// Find the User registered index for web content
 				if(find_userReg_webContent(uri_buf, &content_num, &file_len))
 				{
 					content_found = 1;
 					content_addr = (uint32_t)content_num;
 					HTTPSock_Status[get_seqnum].storage_type = CODEFLASH;
 				}
-				// Not CGI request, Web content in 'SD card' or 'Data flash' requested
 			#ifdef _USE_SDCARD_
 				else
 				{
-					// ========== GZIP SUPPORT: START ==========
-
-					// FatFS requires paths to start with '/'
-					// Create FatFS path with leading '/'
 					char fatfs_path[MAX_URI_SIZE + 1];
 					if (uri_name[0] != '/') {
 						fatfs_path[0] = '/';
@@ -727,69 +819,70 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 						strcpy(fatfs_path, (char *)uri_name);
 					}
 
-					// Check if this is JS/CSS/HTML/JSON file
 					uint8_t try_gzip = 0;
 					if(strstr(fatfs_path, ".js") || strstr(fatfs_path, ".css") ||
 					   strstr(fatfs_path, ".html") || strstr(fatfs_path, ".json")) {
 						try_gzip = 1;
 					}
 
-					// If JS/CSS - try GZIP version first
 					if(try_gzip) {
-						char gz_filename[MAX_URI_SIZE + 4];  // +4 for ".gz"
+						char gz_filename[MAX_URI_SIZE + 4];
 						sprintf(gz_filename, "%s.gz", fatfs_path);
 
 						printf("[HTTP] Trying GZIP version: %s\r\n", gz_filename);
 
-						if((fr = f_open(&fs, gz_filename, FA_READ)) == FR_OK)
+						fr = f_open(&fs, gz_filename, FA_READ);
+						if(fr == FR_OK)
 						{
-							// GZIP version found!
 							content_found = 1;
 							current_file_is_gzip = 1;
-							file_len = f_size(&fs);  // Use FatFS API for file size
-							content_addr = 0;  // Not needed for FatFS - file handle is used
+							file_len = f_size(&fs);
+							content_addr = 0;
 							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
 							printf("[HTTP] Found GZIP file: %s (%ld bytes)\r\n", gz_filename, file_len);
 						}
 						else {
-							// No GZIP version, try normal file
-							printf("[HTTP] No GZIP version, trying normal file: %s\r\n", fatfs_path);
+							printf("[HTTP] No GZIP version (error %d), trying normal file: %s\r\n", fr, fatfs_path);
 
-							if((fr = f_open(&fs, fatfs_path, FA_READ)) == FR_OK)
+							fr = f_open(&fs, fatfs_path, FA_READ);
+							if(fr == FR_OK)
 							{
 								content_found = 1;
 								current_file_is_gzip = 0;
-								file_len = f_size(&fs);  // Use FatFS API for file size
-								content_addr = 0;  // Not needed for FatFS - file handle is used
+								file_len = f_size(&fs);
+								content_addr = 0;
 								HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
 								printf("[HTTP] Found normal file: %s (%ld bytes)\r\n", fatfs_path, file_len);
 							}
+							else {
+								printf("[HTTP] ERROR: f_open failed for %s (error %d)\r\n", fatfs_path, fr);
+							}
 						}
 					}
 					else {
-						// For other files (images, fonts) - normal loading
-						if((fr = f_open(&fs, fatfs_path, FA_READ)) == FR_OK)
+						fr = f_open(&fs, fatfs_path, FA_READ);
+						if(fr == FR_OK)
 						{
 							content_found = 1;
 							current_file_is_gzip = 0;
-							file_len = f_size(&fs);  // Use FatFS API for file size
-							content_addr = 0;  // Not needed for FatFS - file handle is used
+							file_len = f_size(&fs);
+							content_addr = 0;
 							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
 							printf("[HTTP] Loaded normal file: %s (%ld bytes)\r\n", fatfs_path, file_len);
 						}
+						else {
+							printf("[HTTP] ERROR: f_open failed for %s (error %d)\r\n", fatfs_path, fr);
+						}
 					}
-
-					// ========== GZIP SUPPORT: END ==========
 				}
 			#elif _USE_FLASH_
-				else if(/* Read content from Dataflash */)
+				else if(0)
 				{
 					content_found = 1;
 					HTTPSock_Status[get_seqnum].storage_type = DATAFLASH;
-					; // To do
 				}
 			#endif
 
@@ -799,7 +892,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					printf("> HTTPSocket[%d] : Unknown Page Request\r\n", s);
 			#endif
 					http_status = STATUS_NOT_FOUND;
-					current_file_is_gzip = 0;  // Reset flag on error
+					current_file_is_gzip = 0;
 				}
 				else
 				{
@@ -810,7 +903,6 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					http_status = STATUS_OK;
 				}
 
-				// Send HTTP header
 				if(http_status)
 				{
 			#ifdef _HTTPSERVER_DEBUG_
@@ -819,7 +911,6 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					send_http_response_header(s, p_http_request->TYPE, file_len, http_status);
 				}
 
-				// Send HTTP body (content)
 				if(http_status == STATUS_OK)
 				{
 					send_http_response_body(s, uri_name, http_response, content_addr, file_len);
@@ -830,7 +921,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 		case METHOD_POST :
 			mid((char *)p_http_request->URI, "/", " HTTP", (char *)uri_buf);
 			uri_name = uri_buf;
-			find_http_uri_type(&p_http_request->TYPE, uri_name);	// Check file type (HTML, TEXT, GIF, JPEG are included)
+			find_http_uri_type(&p_http_request->TYPE, uri_name);
 
 #ifdef _HTTPSERVER_DEBUG_
 			printf("\r\n> HTTPSocket[%d] : HTTP Method POST\r\n", s);
@@ -838,19 +929,17 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			printf("Type = %d\r\n", p_http_request->TYPE);
 #endif
 
-			if(p_http_request->TYPE == PTYPE_CGI)	// HTTP POST Method; CGI Process
+			if(p_http_request->TYPE == PTYPE_CGI)
 			{
 				content_found = http_post_cgi_handler(s, uri_name, p_http_request, http_response, &file_len);
 #ifdef _HTTPSERVER_DEBUG_
 				printf("> HTTPSocket[%d] : [CGI: %s] / Response len [ %ld ]byte\r\n", s, content_found?"Content found":"Content not found", file_len);
 #endif
 
-				// === КРИТИЧНО: НЕ отправляем ответ для потоковой загрузки! ===
 				if(HTTPSock_Status[get_seqnum].sock_status == STATE_HTTP_UPLOAD) {
 #ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : [POST] Streaming upload - response will be sent after completion\r\n", s);
 #endif
-					// Ответ отправится в STATE_HTTP_UPLOAD когда загрузка завершится
 					break;
 				}
 
@@ -858,7 +947,6 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 				{
 					send_http_response_cgi(s, pHTTP_TX, http_response, (uint16_t)file_len);
 
-					// Reset the H/W for apply to the change configuration information
 					if(content_found == HTTP_RESET) HTTPServer_ReStart();
 				}
 				else
@@ -866,7 +954,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					send_http_response_header(s, PTYPE_CGI, 0, STATUS_NOT_FOUND);
 				}
 			}
-			else	// HTTP POST Method; Content not found
+			else
 			{
 				send_http_response_header(s, 0, 0, STATUS_NOT_FOUND);
 			}
@@ -946,7 +1034,7 @@ uint8_t display_reg_webContent_list(void)
 uint8_t find_userReg_webContent(uint8_t * content_name, uint16_t * content_num, uint32_t * file_len)
 {
 	uint16_t i;
-	uint8_t ret = 0; // '0' means 'File Not Found'
+	uint8_t ret = 0;
 
 	for(i = 0; i < total_content_cnt; i++)
 	{
@@ -954,13 +1042,12 @@ uint8_t find_userReg_webContent(uint8_t * content_name, uint16_t * content_num, 
 		{
 			*file_len = web_content[i].content_len;
 			*content_num = i;
-			ret = 1; // If the requested content found, ret set to '1' (Found)
+			ret = 1;
 			break;
 		}
 	}
 	return ret;
 }
-
 
 uint16_t read_userReg_webContent(uint16_t content_num, uint8_t * buf, uint32_t offset, uint16_t size)
 {
@@ -973,7 +1060,7 @@ uint16_t read_userReg_webContent(uint16_t content_num, uint8_t * buf, uint32_t o
 	if(offset) ptr += offset;
 
 	strncpy((char *)buf, (char *)ptr, size);
-	*(buf+size) = 0; // Insert '/0' for indicates the 'End of String' (null terminated)
+	*(buf+size) = 0;
 
 	ret = strlen((void *)buf);
 	return ret;
