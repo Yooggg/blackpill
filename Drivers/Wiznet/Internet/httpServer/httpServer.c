@@ -1,3 +1,6 @@
+/*make this file to work with server for vue
+not for the file manager api*/
+
 #include "../../../Wiznet/Internet/httpServer/httpServer.h"
 
 #include <stdio.h>

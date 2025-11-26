@@ -3,6 +3,7 @@
  * @brief	HTTP Server Utilities (Fixed boundary detection bug)
  * @version 2.2
  * @date	2025/01/XX
+ * @change Make this file fully working with api and not using httpServer
  */
 
 #include "../../../Wiznet/Internet/httpServer/httpUtil.h"
@@ -51,7 +52,7 @@ uint8_t http_get_cgi_handler(uint8_t * uri_name, uint8_t * buf, uint32_t * file_
 
 		// Открыть директорию (БЕЗ слэша в конце!)
 		res = f_opendir(&dir, path);
-		if (res == FR_OK) {
+		if (res == FR_OK) { // FR_TOO_MANY_OPEN_FILES после открытия /web/ для просмотра vue видимо там файл не закрывается.
 			// Читать содержимое директории
 			while (1) {
 				res = f_readdir(&dir, &fno);
@@ -373,7 +374,7 @@ uint8_t http_post_cgi_handler(uint8_t s, uint8_t * uri_name, st_http_request * p
 		}
 
 		// === ШАГ 5: ПРОВЕРЯЕМ - ФАЙЛ ПОЛНОСТЬЮ ПОЛУЧЕН? ===
-		if (bytes_written >= request.content_length) {
+		if (bytes_written >= to_write) {
 			// Весь файл уже в первом пакете!
 			printf("[HTTP] File complete! Written %u of %lu bytes\r\n",
 				   bytes_written, request.content_length);
@@ -515,7 +516,7 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 	}
 
 	// === 2. Content-Disposition ===
-	request->content_disposition = strstr(uri, "Content-Disposition: form-data;");
+	request->content_disposition = strstr(uri, "Content-Disposition:");
 	if (!request->content_disposition) {
 		printf("[HTTP] ERROR: No Content-Disposition\r\n");
 		return HTTP_FAILED;
@@ -537,17 +538,17 @@ uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_
 	}
 	request->content_start += 4;
 
-	// === 5. КОНЕЦ данных ===
+	// === 5. КОНЕЦ данных === // Неправильно сделано strstr(request->content_start,"\r\n\r\n")
 	// Для определения конца доступных данных используем размер буфера
-	extern uint8_t * pHTTP_RX;
-	uint32_t buffer_size = 4096;  // Размер буфера приёма
+//	extern uint8_t * pHTTP_RX;
+//	uint32_t buffer_size = 4096;  // Размер буфера приёма
+//
+//	char* buffer_start = (char*)pHTTP_RX;
+//	request->content_end = buffer_start + buffer_size;
+//
+//	uint32_t available = (uint32_t)(request->content_end - request->content_start);
 
-	char* buffer_start = (char*)pHTTP_RX;
-	request->content_end = buffer_start + buffer_size;
-
-	uint32_t available = (uint32_t)(request->content_end - request->content_start);
-
-	printf("[HTTP] Available data in first packet: %lu bytes\r\n", available);
+	request->content_end = strstr(request->content_start, "\r\n----");
 
 	return HTTP_OK;
 }

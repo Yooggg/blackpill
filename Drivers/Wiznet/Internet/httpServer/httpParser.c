@@ -69,10 +69,10 @@ void make_http_response_head(
 	else if (type == PTYPE_TTF)		head = RES_TTFHEAD_OK;
 	else if (type == PTYPE_OTF)		head = RES_OTFHEAD_OK;
 	else if (type == PTYPE_WOFF)	head = RES_WOFFHEAD_OK;
-	else if (type == PTYPE_WOFF2)	head = RES_WOFF2HEAD_OK;   // <-- ДОБАВЛЕНО!
+	else if (type == PTYPE_WOFF2)	head = RES_WOFF2HEAD_OK;
 	else if (type == PTYPE_EOT)		head = RES_EOTHEAD_OK;
 	else if (type == PTYPE_SVG)		head = RES_SVGHEAD_OK;
-	else if (type == PTYPE_MAP)		head = RES_MAPHEAD_OK;     // <-- ДОБАВЛЕНО!
+	else if (type == PTYPE_MAP)		head = RES_MAPHEAD_OK;
 #ifdef _HTTPPARSER_DEBUG_
 	else
 	{
@@ -119,10 +119,10 @@ void find_http_uri_type(
 	else if (strstr(buf, ".ttf") 	|| strstr(buf,".TTF"))	*type = PTYPE_TTF;
 	else if (strstr(buf, ".otf") 	|| strstr(buf,".OTF"))	*type = PTYPE_OTF;
 	else if (strstr(buf, ".woff") 	|| strstr(buf,".WOFF"))	*type = PTYPE_WOFF;
-	else if (strstr(buf, ".woff2")	|| strstr(buf,".WOFF2"))*type = PTYPE_WOFF2;  // <-- ДОБАВЛЕНО!
+	else if (strstr(buf, ".woff2")	|| strstr(buf,".WOFF2"))*type = PTYPE_WOFF2;
 	else if (strstr(buf, ".eot") 	|| strstr(buf,".EOT"))	*type = PTYPE_EOT;
 	else if (strstr(buf, ".svg") 	|| strstr(buf,".SVG"))	*type = PTYPE_SVG;
-	else if (strstr(buf, ".map") 	|| strstr(buf,".MAP"))	*type = PTYPE_MAP;     // <-- ДОБАВЛЕНО!
+	else if (strstr(buf, ".map") 	|| strstr(buf,".MAP"))	*type = PTYPE_MAP;
 	else 													*type = PTYPE_ERR;
 }
 
