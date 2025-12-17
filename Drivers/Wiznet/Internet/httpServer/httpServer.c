@@ -202,120 +202,207 @@ void httpServer_run(uint8_t seqnum)
 					if(HTTPSock_Status[seqnum].file_len == 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
 					break;
 
-				case STATE_HTTP_UPLOAD:
-#ifdef _USE_SDCARD_
-				{
-					if ((len = getSn_RX_RSR(s)) > 0)
+					/**
+					 * ДЕТАЛЬНАЯ ОТЛАДКА для STATE_HTTP_UPLOAD
+					 * Замените case STATE_HTTP_UPLOAD полностью
+					 *
+					 * Показывает ЧТО именно приходит и записывается в каждом пакете
+					 */
+
+					case STATE_HTTP_UPLOAD:
 					{
-						if (len > DATA_BUF_SIZE - 1) len = DATA_BUF_SIZE - 1;
+						if (!HTTPSock_Status[seqnum].upload_active) {
+							printf("[HTTP] ERROR: Upload not active for socket %d\r\n", s);
+							f_close(&HTTPSock_Status[seqnum].upload_file);
+							HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
+							disconnect(s);
+							break;
+						}
 
-						len = recv(s, (uint8_t *)http_request, len);
+						// Получаем размер доступных данных
+						uint16_t received = getSn_RX_RSR(s);
 
-						if (len > 0) {
-#ifdef _HTTPSERVER_DEBUG_
-							printf("> HTTPSocket[%d] : [Upload] Received %d bytes\r\n", s, len);
-#endif
+						if (received > 0) {
+							printf("\r\n[PACKET] ============================================\r\n");
+							printf("[PACKET] Socket %d: RX buffer has %u bytes\r\n", s, received);
+							printf("[PACKET] Current progress: %lu / %lu bytes (%.1f%%)\r\n",
+							       HTTPSock_Status[seqnum].upload_bytes_written,
+							       HTTPSock_Status[seqnum].upload_content_length,
+							       (HTTPSock_Status[seqnum].upload_bytes_written * 100.0) /
+							       HTTPSock_Status[seqnum].upload_content_length);
 
-							uint32_t bytes_to_write = len;
-							uint32_t total_received_after = HTTPSock_Status[seqnum].upload_bytes_received + len;
+							// Ограничиваем размер чтения буфером
+							#ifndef DATA_BUF_SIZE
+							#define DATA_BUF_SIZE 2048
+							#endif
 
-							if (total_received_after >= HTTPSock_Status[seqnum].upload_content_length) {
-								uint32_t remaining = HTTPSock_Status[seqnum].upload_content_length -
-													HTTPSock_Status[seqnum].upload_bytes_received;
-
-								if (remaining < len) {
-									bytes_to_write = remaining;
-#ifdef _HTTPSERVER_DEBUG_
-									printf("> HTTPSocket[%d] : [Upload] Last packet, writing only %lu bytes\r\n",
-										   s, bytes_to_write);
-#endif
-								}
+							if (received > DATA_BUF_SIZE) {
+								received = DATA_BUF_SIZE;
+								printf("[PACKET] Limiting read to %u bytes\r\n", received);
 							}
 
-							if (bytes_to_write > 0) {
-								UINT bytes_written = 0;
+							// Получаем указатель на буфер
+							extern uint8_t * pHTTP_RX;
+
+							// Читаем данные в буфер
+							uint16_t read_len = recv(s, pHTTP_RX, received);
+							printf("[PACKET] recv() returned %u bytes\r\n", read_len);
+
+							if (read_len > 0) {
+								// === ПОКАЗЫВАЕМ ЧТО ПРИШЛО ===
+								printf("[PACKET] First 100 bytes received:\r\n[");
+								for (int i = 0; i < 100 && i < read_len; i++) {
+									char c = pHTTP_RX[i];
+									if (c >= 32 && c <= 126) printf("%c", c);
+									else if (c == '\r') printf("\\r");
+									else if (c == '\n') printf("\\n");
+									else printf("<%02X>", (unsigned char)c);
+								}
+								printf("]\r\n");
+
+								printf("[PACKET] Last 100 bytes received:\r\n[");
+								int start = (read_len > 100) ? (read_len - 100) : 0;
+								for (int i = start; i < read_len; i++) {
+									char c = pHTTP_RX[i];
+									if (c >= 32 && c <= 126) printf("%c", c);
+									else if (c == '\r') printf("\\r");
+									else if (c == '\n') printf("\\n");
+									else printf("<%02X>", (unsigned char)c);
+								}
+								printf("]\r\n");
+
+								// Сколько еще нужно записать?
+								uint32_t remaining = HTTPSock_Status[seqnum].upload_content_length -
+								                     HTTPSock_Status[seqnum].upload_bytes_written;
+
+								printf("[PACKET] Remaining to write: %lu bytes\r\n", remaining);
+
+								// Не пишем больше чем осталось
+								uint32_t to_write = (read_len > remaining) ? remaining : read_len;
+
+								printf("[PACKET] Will write: %lu bytes (have %u, remaining %lu)\r\n",
+								       to_write, read_len, remaining);
+
+								if (to_write != read_len) {
+									printf("[PACKET] WARNING: Not writing all received data!\r\n");
+									printf("[PACKET] Excess data: %u bytes\r\n", read_len - to_write);
+
+									// Показываем что НЕ будет записано
+									printf("[PACKET] Excess data (not written):\r\n[");
+									for (uint32_t i = to_write; i < read_len && i < (to_write + 200); i++) {
+										char c = pHTTP_RX[i];
+										if (c >= 32 && c <= 126) printf("%c", c);
+										else if (c == '\r') printf("\\r");
+										else if (c == '\n') printf("\\n");
+										else printf("<%02X>", (unsigned char)c);
+									}
+									printf("]\r\n");
+								}
+
+								// === ПОКАЗЫВАЕМ ЧТО БУДЕМ ПИСАТЬ ===
+								if (to_write > 0) {
+									printf("[PACKET] Data to be written:\r\n");
+									printf("[PACKET] First 100 bytes:\r\n[");
+									for (uint32_t i = 0; i < 100 && i < to_write; i++) {
+										char c = pHTTP_RX[i];
+										if (c >= 32 && c <= 126) printf("%c", c);
+										else if (c == '\r') printf("\\r");
+										else if (c == '\n') printf("\\n");
+										else printf("<%02X>", (unsigned char)c);
+									}
+									printf("]\r\n");
+
+									printf("[PACKET] Last 50 bytes to write:\r\n[");
+									uint32_t start = (to_write > 50) ? (to_write - 50) : 0;
+									for (uint32_t i = start; i < to_write; i++) {
+										char c = pHTTP_RX[i];
+										if (c >= 32 && c <= 126) printf("%c", c);
+										else if (c == '\r') printf("\\r");
+										else if (c == '\n') printf("\\n");
+										else printf("<%02X>", (unsigned char)c);
+									}
+									printf("]\r\n");
+								}
+
+								// Записываем в файл
+								UINT written = 0;
 								FRESULT res = f_write(&HTTPSock_Status[seqnum].upload_file,
-													 http_request,
-													 bytes_to_write,
-													 &bytes_written);
+								                      pHTTP_RX,
+								                      read_len,
+								                      &written);
+
+								printf("[PACKET] f_write(requested=%lu) returned: FR=%d, written=%u\r\n",
+								       to_write, res, written);
 
 								if (res != FR_OK) {
-#ifdef _HTTPSERVER_DEBUG_
-									printf("> HTTPSocket[%d] : [Upload] ERROR: f_write failed, code %d\r\n", s, res);
-#endif
+									printf("[HTTP] Socket %d: Write error: %d\r\n", s, res);
 									f_close(&HTTPSock_Status[seqnum].upload_file);
 									HTTPSock_Status[seqnum].upload_active = 0;
-
-									const char* error_response = "HTTP/1.1 500 Internal Server Error\r\n"
-																 "Content-Type: text/plain\r\n"
-																 "Content-Length: 12\r\n"
-																 "\r\n"
-																 "WRITE_FAILED";
-									send(s, (uint8_t*)error_response, strlen(error_response));
-
-									HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
+									HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
+									disconnect(s);
 									break;
 								}
 
-								HTTPSock_Status[seqnum].upload_bytes_written += bytes_written;
-								HTTPSock_Status[seqnum].upload_bytes_received += bytes_to_write;
-
-#ifdef _HTTPSERVER_DEBUG_
-								printf("> HTTPSocket[%d] : [Upload] Written %u bytes (total: %lu / %lu)\r\n",
-									   s, bytes_written,
-									   HTTPSock_Status[seqnum].upload_bytes_received,
-									   HTTPSock_Status[seqnum].upload_content_length);
-#endif
-							}
-
-							if (HTTPSock_Status[seqnum].upload_bytes_received >=
-								HTTPSock_Status[seqnum].upload_content_length)
-							{
-								// === КРИТИЧНО: Принудительный flush перед закрытием ===
-								FRESULT sync_result = f_sync(&HTTPSock_Status[seqnum].upload_file);
-								if (sync_result != FR_OK) {
-#ifdef _HTTPSERVER_DEBUG_
-									printf("> HTTPSocket[%d] : [Upload] WARNING: f_sync failed (error %d)\r\n", s, sync_result);
-#endif
+								if (written != to_write) {
+									printf("[PACKET] WARNING: Partial write! wrote %u, requested %lu\r\n",
+									       written, to_write);
 								}
 
-								FRESULT close_result = f_close(&HTTPSock_Status[seqnum].upload_file);
-								HTTPSock_Status[seqnum].upload_active = 0;
-								HTTPSock_Status[seqnum].upload_bytes_received = 0;
-								HTTPSock_Status[seqnum].upload_bytes_written = 0;
-								HTTPSock_Status[seqnum].upload_content_length = 0;
+								HTTPSock_Status[seqnum].upload_bytes_written += written;
 
-#ifdef _HTTPSERVER_DEBUG_
-								printf("> HTTPSocket[%d] : [Upload] COMPLETE! Total written: %lu bytes (sync=%d, close=%d)\r\n",
-									   s, HTTPSock_Status[seqnum].upload_bytes_written, sync_result, close_result);
-#endif
+								printf("[PACKET] New total: %lu / %lu bytes (%.2f%%)\r\n",
+								       HTTPSock_Status[seqnum].upload_bytes_written,
+								       HTTPSock_Status[seqnum].upload_content_length,
+								       (HTTPSock_Status[seqnum].upload_bytes_written * 100.0) /
+								       HTTPSock_Status[seqnum].upload_content_length);
+								printf("[PACKET] ============================================\r\n\r\n");
 
-								const char* success_response = "HTTP/1.1 200 OK\r\n"
-															  "Content-Type: text/plain\r\n"
-															  "Content-Length: 2\r\n"
-															  "\r\n"
-															  "OK";
-								send(s, (uint8_t*)success_response, strlen(success_response));
+								// Проверяем завершенность
+								if (HTTPSock_Status[seqnum].upload_bytes_written >=
+								    HTTPSock_Status[seqnum].upload_content_length) {
 
-								gettime = get_httpServer_timecount();
-								while(getSn_TX_FSR(s) != getSn_TxMAX(s))
-								{
-									if((get_httpServer_timecount() - gettime) > 3)
-									{
-#ifdef _HTTPSERVER_DEBUG_
-										printf("> HTTPSocket[%d] : [Upload] TX Buffer clear timeout\r\n", s);
-#endif
-										break;
-									}
+									printf("[HTTP] ========================================\r\n");
+									printf("[HTTP] Socket %d: Upload complete!\r\n", s);
+									printf("[HTTP] Total written: %lu bytes\r\n",
+									       HTTPSock_Status[seqnum].upload_bytes_written);
+									printf("[HTTP] Expected size: %lu bytes\r\n",
+									       HTTPSock_Status[seqnum].upload_content_length);
+									printf("[HTTP] Match: %s\r\n",
+									       (HTTPSock_Status[seqnum].upload_bytes_written ==
+									        HTTPSock_Status[seqnum].upload_content_length) ? "YES" : "NO");
+									printf("[HTTP] ========================================\r\n");
+
+									// Закрываем файл
+									res = f_sync(&HTTPSock_Status[seqnum].upload_file);
+									printf("[HTTP] Socket %d: File synced (result: %d)\r\n", s, res);
+
+									res = f_close(&HTTPSock_Status[seqnum].upload_file);
+									printf("[HTTP] Socket %d: File closed (result: %d)\r\n", s, res);
+
+									// Отправляем ответ клиенту
+									char response[] = "HTTP/1.1 200 OK\r\n"
+									                  "Content-Type: text/plain\r\n"
+									                  "Content-Length: 2\r\n"
+									                  "Connection: close\r\n"
+									                  "\r\n"
+									                  "OK";
+									send(s, (uint8_t*)response, strlen(response));
+
+									// Сбрасываем состояние
+									HTTPSock_Status[seqnum].upload_active = 0;
+									HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
 								}
 
-								HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
+								// Периодически синхронизируем для надежности
+								if ((HTTPSock_Status[seqnum].upload_bytes_written % 10240) == 0) {
+									res = f_sync(&HTTPSock_Status[seqnum].upload_file);
+								}
+							} else {
+								printf("[HTTP] Socket %d: recv() returned 0 or error\r\n", s);
 							}
 						}
+						break;
 					}
-				}
-#endif
-				break;
 
 				case STATE_HTTP_RES_DONE :
 #ifdef _HTTPSERVER_DEBUG_
@@ -384,9 +471,8 @@ void httpServer_run(uint8_t seqnum)
 #ifdef _USE_SDCARD_
 			if(HTTPSock_Status[seqnum].file_len > 0 &&
 			   HTTPSock_Status[seqnum].storage_type == SDCARD) {
-				f_sync(&fs);
-				FRESULT close_result = f_close(&fs);
-
+				f_sync(&HTTPSock_Status[seqnum].upload_file);
+				FRESULT close_result = f_close(&HTTPSock_Status[seqnum].upload_file);
 #ifdef _HTTPSERVER_DEBUG_
 				if(close_result != FR_OK) {
 					printf("> HTTPSocket[%d] : [CLOSE_WAIT] ERROR: f_close failed with code %d!\r\n", s, close_result);
@@ -529,6 +615,10 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 #endif
 
 	if((get_seqnum = getHTTPSequenceNum(s)) == -1) return;
+	printf("[DEBUG] S%d: ENTER send_body, storage=%d, len=%ld, ofs=%ld\r\n",
+	       s, HTTPSock_Status[get_seqnum].storage_type,
+	       HTTPSock_Status[get_seqnum].file_len,
+	       HTTPSock_Status[get_seqnum].file_offset);
 
 	if(!HTTPSock_Status[get_seqnum].file_len)
 	{
@@ -597,18 +687,25 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 #ifdef _USE_SDCARD_
 	else if(HTTPSock_Status[get_seqnum].storage_type == SDCARD)
 	{
-		fr = f_read(&fs, &buf[0], send_len, (void *)&blocklen);
-
+		printf("[DEBUG] S%d: READ fs=%p, len=%ld, ofs=%ld\r\n",
+		       s, (void*)&HTTPSock_Status[get_seqnum].upload_file, send_len, HTTPSock_Status[get_seqnum].file_offset);
+		fr = f_read(&HTTPSock_Status[get_seqnum].upload_file, &buf[0], send_len, (void *)&blocklen);
+		printf("[DEBUG] S%d: READ result=%d, got=%u\r\n", s, fr, blocklen);
 		if(fr != FR_OK)
 		{
 			send_len = 0;
 			flag_datasend_end = 1;
 
-			FRESULT sync_result = f_sync(&fs);
-			FRESULT close_result = f_close(&fs);
+			FRESULT sync_result = f_sync(&HTTPSock_Status[get_seqnum].upload_file);
+			printf("[DEBUG] S%d: CLOSE fs=%p\r\n", s, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+			FRESULT close_result = f_close(&HTTPSock_Status[get_seqnum].upload_file);
+
+			printf("[DEBUG] S%d: CLOSE result=%d\r\n", s, close_result);
 			HTTPSock_Status[get_seqnum].file_len = 0;
 			HTTPSock_Status[get_seqnum].file_offset = 0;
 			HTTPSock_Status[get_seqnum].storage_type = NONE;
+			printf("[DEBUG] S%d: CLOSE result=%d\r\n", s, close_result);
+			printf("[DEBUG] S%d: LOCK released\r\n", s);
 
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : [FatFs] Read error: %d, file synced and closed (sync=%d, close=%d)\r\n",
@@ -623,8 +720,12 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 			HTTPSock_Status[get_seqnum].file_len = 0;
 			HTTPSock_Status[get_seqnum].file_offset = 0;
 
-			FRESULT sync_result = f_sync(&fs);
-			FRESULT close_result = f_close(&fs);
+			FRESULT sync_result = f_sync(&HTTPSock_Status[get_seqnum].upload_file);
+			printf("[DEBUG] S%d: CLOSE fs=%p\r\n", s, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+			FRESULT close_result = f_close(&HTTPSock_Status[get_seqnum].upload_file);
+			printf("[DEBUG] S%d: CLOSE result=%d\r\n", s, close_result);
+
+			printf("[DEBUG] S%d: LOCK released\r\n", s);
 			if(close_result != FR_OK) {
 #ifdef _HTTPSERVER_DEBUG_
 				printf("> HTTPSocket[%d] : [FatFs] ERROR: f_close failed with code %d at EOF!\r\n", s, close_result);
@@ -632,7 +733,6 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 			}
 
 			HTTPSock_Status[get_seqnum].storage_type = NONE;
-
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : [FatFs] EOF reached, file synced and closed (sync=%d, close=%d)\r\n",
 				   s, sync_result, close_result);
@@ -648,8 +748,11 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 
 			*(buf+send_len) = 0;
 
-			FRESULT sync_result = f_sync(&fs);
-			FRESULT close_result = f_close(&fs);
+			FRESULT sync_result = f_sync(&HTTPSock_Status[get_seqnum].upload_file);
+			printf("[DEBUG] S%d: CLOSE fs=%p\r\n", s, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+			FRESULT close_result = f_close(&HTTPSock_Status[get_seqnum].upload_file);
+			printf("[DEBUG] S%d: CLOSE result=%d\r\n", s, close_result);
+			printf("[DEBUG] S%d: LOCK released\r\n", s);
 			if(close_result != FR_OK) {
 #ifdef _HTTPSERVER_DEBUG_
 				printf("> HTTPSocket[%d] : [FatFs] ERROR: f_close failed with code %d at last chunk!\r\n", s, close_result);
@@ -666,7 +769,17 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		else
 		{
 			send_len = blocklen;
-			*(buf+send_len) = 0;
+			    *(buf+send_len) = 0;
+
+			    // Проверяем: это последний chunk?
+			    if(flag_datasend_end && blocklen > 0) {
+			        // Маленький файл прочитан полностью
+			        printf("[DEBUG] S%d: CLOSE small file fs=%p\r\n", s, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+			        FRESULT close_result = f_close(&HTTPSock_Status[get_seqnum].upload_file);
+			        printf("[DEBUG] S%d: CLOSE result=%d\r\n", s, close_result);
+			        HTTPSock_Status[get_seqnum].storage_type = NONE;
+			        printf("[DEBUG] S%d: LOCK released\r\n", s);
+			    }
 		}
 	}
 #endif
@@ -713,6 +826,9 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		printf("> HTTPSocket[%d] : HTTP Response body - offset [ %ld ]\r\n", s, HTTPSock_Status[get_seqnum].file_offset);
 #endif
 	}
+	printf("[DEBUG] S%d: EXIT send_body, len=%ld, ofs=%ld\r\n",
+	           s, HTTPSock_Status[get_seqnum].file_len,
+	           HTTPSock_Status[get_seqnum].file_offset);
 }
 
 static void send_http_response_cgi(uint8_t s, uint8_t * buf, uint8_t * http_body, uint16_t file_len)
@@ -827,19 +943,22 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					   strstr(fatfs_path, ".html") || strstr(fatfs_path, ".json")) {
 						try_gzip = 1;
 					}
+					printf("[DEBUG] S%d: LOCK captured\r\n", s);
+
 
 					if(try_gzip) {
 						char gz_filename[MAX_URI_SIZE + 4];
 						sprintf(gz_filename, "%s.gz", fatfs_path);
 
 						printf("[HTTP] Trying GZIP version: %s\r\n", gz_filename);
-
-						fr = f_open(&fs, gz_filename, FA_READ);
+						printf("[DEBUG] S%d: OPEN GZIP '%s', fs=%p\r\n", s, gz_filename, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+						fr = f_open(&HTTPSock_Status[get_seqnum].upload_file, gz_filename, FA_READ);
+						printf("[DEBUG] S%d: OPEN result=%d, size=%ld\r\n", s, fr, (fr==FR_OK)?f_size(&HTTPSock_Status[get_seqnum].upload_file):0);
 						if(fr == FR_OK)
 						{
 							content_found = 1;
 							current_file_is_gzip = 1;
-							file_len = f_size(&fs);
+							file_len = f_size(&HTTPSock_Status[get_seqnum].upload_file);
 							content_addr = 0;
 							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
@@ -847,13 +966,14 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 						}
 						else {
 							printf("[HTTP] No GZIP version (error %d), trying normal file: %s\r\n", fr, fatfs_path);
-
-							fr = f_open(&fs, fatfs_path, FA_READ);
+							printf("[DEBUG] S%d: OPEN NORMAL '%s', fs=%p\r\n", s, fatfs_path, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+							fr = f_open(&HTTPSock_Status[get_seqnum].upload_file, fatfs_path, FA_READ);
+							printf("[DEBUG] S%d: OPEN result=%d, size=%ld\r\n", s, fr, (fr==FR_OK)?f_size(&HTTPSock_Status[get_seqnum].upload_file):0);
 							if(fr == FR_OK)
 							{
 								content_found = 1;
 								current_file_is_gzip = 0;
-								file_len = f_size(&fs);
+								file_len = f_size(&HTTPSock_Status[get_seqnum].upload_file);
 								content_addr = 0;
 								HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
@@ -865,12 +985,14 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 						}
 					}
 					else {
-						fr = f_open(&fs, fatfs_path, FA_READ);
+						printf("[DEBUG] S%d: OPEN '%s', fs=%p\r\n", s, fatfs_path, (void*)&HTTPSock_Status[get_seqnum].upload_file);
+						fr = f_open(&HTTPSock_Status[get_seqnum].upload_file, fatfs_path, FA_READ);
+						printf("[DEBUG] S%d: OPEN result=%d, size=%ld\r\n", s, fr, (fr==FR_OK)?f_size(&HTTPSock_Status[get_seqnum].upload_file):0);
 						if(fr == FR_OK)
 						{
 							content_found = 1;
 							current_file_is_gzip = 0;
-							file_len = f_size(&fs);
+							file_len = f_size(&HTTPSock_Status[get_seqnum].upload_file);
 							content_addr = 0;
 							HTTPSock_Status[get_seqnum].storage_type = SDCARD;
 
@@ -932,7 +1054,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			printf("Type = %d\r\n", p_http_request->TYPE);
 #endif
 
-			if(p_http_request->TYPE == PTYPE_CGI)
+			if(p_http_request->TYPE == PTYPE_CGI || p_http_request->TYPE == PTYPE_HTML)
 			{
 				content_found = http_post_cgi_handler(s, uri_name, p_http_request, http_response, &file_len);
 #ifdef _HTTPSERVER_DEBUG_

@@ -39,6 +39,8 @@ uint8_t predefined_set_cgi_processor(uint8_t * uri_name, uint8_t * uri, uint8_t 
 uint8_t disassemble_post_request(st_http_request * p_http_request, post_request_t * request);
 
 int get_query_param(const char* uri, const char* key, char* out, size_t max_len);
+uint8_t parse_octet_stream_upload(st_http_request * p_http_request, post_request_t* request);
+void get_query_param_raw_file(const char *url, const char *key, char *out, int out_size);
 
 #ifdef __cplusplus
 }

@@ -89,6 +89,7 @@ typedef struct _st_http_socket
     uint32_t upload_bytes_received;
     uint32_t upload_bytes_written;
     uint8_t upload_active;
+    //FIL get_file;
 #endif
 }st_http_socket;
 
